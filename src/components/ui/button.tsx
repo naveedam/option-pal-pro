@@ -15,6 +15,10 @@ const buttonVariants = cva(
         secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         ghost: "hover:bg-accent hover:text-accent-foreground",
         link: "text-primary underline-offset-4 hover:underline",
+        buy: "bg-profit text-primary-foreground hover:bg-profit/90 font-semibold shadow-[0_0_12px_hsl(var(--profit)/0.3)]",
+        sell: "bg-loss text-destructive-foreground hover:bg-loss/90 font-semibold shadow-[0_0_12px_hsl(var(--loss)/0.3)]",
+        signal: "bg-signal/20 text-signal border border-signal/40 hover:bg-signal/30",
+        terminal: "bg-secondary text-foreground border border-border hover:border-primary/50 font-mono text-xs",
       },
       size: {
         default: "h-10 px-4 py-2",
