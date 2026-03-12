@@ -1,1 +1,4 @@
 project_id = "xaxxdmvtfydqalswrneq"
+
+[functions.kotak-neo-auth]
+verify_jwt = false
