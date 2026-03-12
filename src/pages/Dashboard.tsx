@@ -1,18 +1,26 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Switch } from '@/components/ui/switch';
+import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { BrokerStatus } from '@/components/trading/BrokerStatus';
+import { BrokerLoginDialog } from '@/components/trading/BrokerLoginDialog';
 import { SpotTicker } from '@/components/trading/SpotTicker';
 import { OptionChainTable } from '@/components/trading/OptionChainTable';
 import { SignalPanel } from '@/components/trading/SignalPanel';
 import { PositionsPanel } from '@/components/trading/PositionsPanel';
 import { RiskControls } from '@/components/trading/RiskControls';
 import { useMarketData } from '@/hooks/useMarketData';
+import { useBrokerConnection } from '@/hooks/useBrokerConnection';
+import { supabase } from '@/integrations/supabase/client';
+import { LogOut, Plug } from 'lucide-react';
 
 const Dashboard = () => {
   const [isPaperTrading, setIsPaperTrading] = useState(true);
   const [selectedIndex, setSelectedIndex] = useState<'NIFTY' | 'SENSEX'>('NIFTY');
+  const [brokerDialogOpen, setBrokerDialogOpen] = useState(false);
+
+  const broker = useBrokerConnection();
 
   const {
     marketData,
@@ -38,6 +46,10 @@ const Dashboard = () => {
     }
   };
 
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+  };
+
   if (!marketData) {
     return (
       <div className="h-screen flex items-center justify-center bg-background">
@@ -56,7 +68,32 @@ const Dashboard = () => {
           <h1 className="font-mono text-sm font-bold text-primary terminal-glow tracking-wider">
             OPTIQ<span className="text-muted-foreground">.TRADE</span>
           </h1>
-          <BrokerStatus isConnected={true} isPaperTrading={isPaperTrading} />
+          <BrokerStatus isConnected={broker.isConnected} isPaperTrading={isPaperTrading} />
+          {!broker.isConnected && (
+            <Button
+              variant="terminal"
+              size="sm"
+              onClick={() => setBrokerDialogOpen(true)}
+              className="text-xs gap-1"
+            >
+              <Plug className="w-3 h-3" />
+              CONNECT BROKER
+            </Button>
+          )}
+          {broker.isConnected && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={async () => {
+                await broker.disconnect();
+                setIsPaperTrading(true);
+                toast.info('Broker disconnected');
+              }}
+              className="text-xs text-muted-foreground"
+            >
+              DISCONNECT
+            </Button>
+          )}
         </div>
 
         <div className="flex items-center gap-4">
@@ -76,21 +113,28 @@ const Dashboard = () => {
           />
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className={`text-xs font-mono ${isPaperTrading ? 'text-warning' : 'text-loss'}`}>
-            {isPaperTrading ? '📝 PAPER' : '🔴 LIVE'}
-          </span>
-          <Switch
-            checked={!isPaperTrading}
-            onCheckedChange={(checked) => {
-              if (checked) {
-                toast.warning('Live trading requires Kotak Neo connection', {
-                  description: 'Connect your broker account first',
-                });
-              }
-              setIsPaperTrading(!checked);
-            }}
-          />
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className={`text-xs font-mono ${isPaperTrading ? 'text-warning' : 'text-loss'}`}>
+              {isPaperTrading ? '📝 PAPER' : '🔴 LIVE'}
+            </span>
+            <Switch
+              checked={!isPaperTrading}
+              onCheckedChange={(checked) => {
+                if (checked && !broker.isConnected) {
+                  toast.warning('Connect Kotak Neo broker first', {
+                    description: 'Click CONNECT BROKER to link your account',
+                  });
+                  setBrokerDialogOpen(true);
+                  return;
+                }
+                setIsPaperTrading(!checked);
+              }}
+            />
+          </div>
+          <Button variant="ghost" size="icon" onClick={handleLogout} className="text-muted-foreground">
+            <LogOut className="w-4 h-4" />
+          </Button>
         </div>
       </header>
 
@@ -146,6 +190,13 @@ const Dashboard = () => {
           tradesToday={tradesToday}
         />
       </div>
+
+      {/* Broker Login Dialog */}
+      <BrokerLoginDialog
+        open={brokerDialogOpen}
+        onOpenChange={setBrokerDialogOpen}
+        onConnected={() => broker.refresh()}
+      />
     </div>
   );
 };
