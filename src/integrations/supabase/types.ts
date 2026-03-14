@@ -71,6 +71,99 @@ export type Database = {
         }
         Relationships: []
       }
+      signal_history: {
+        Row: {
+          action_taken: string | null
+          confidence: number
+          created_at: string
+          id: string
+          index_name: string
+          option_type: string
+          price_at_signal: number | null
+          reason: string | null
+          signal_type: string
+          strike: number
+          user_id: string
+        }
+        Insert: {
+          action_taken?: string | null
+          confidence: number
+          created_at?: string
+          id?: string
+          index_name: string
+          option_type: string
+          price_at_signal?: number | null
+          reason?: string | null
+          signal_type: string
+          strike: number
+          user_id: string
+        }
+        Update: {
+          action_taken?: string | null
+          confidence?: number
+          created_at?: string
+          id?: string
+          index_name?: string
+          option_type?: string
+          price_at_signal?: number | null
+          reason?: string | null
+          signal_type?: string
+          strike?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
+      trades: {
+        Row: {
+          closed_at: string | null
+          created_at: string
+          entry_price: number
+          exit_price: number | null
+          id: string
+          is_paper: boolean
+          option_type: string
+          order_id: string
+          pnl: number | null
+          quantity: number
+          status: string
+          strike: number
+          symbol: string
+          user_id: string
+        }
+        Insert: {
+          closed_at?: string | null
+          created_at?: string
+          entry_price: number
+          exit_price?: number | null
+          id?: string
+          is_paper?: boolean
+          option_type: string
+          order_id: string
+          pnl?: number | null
+          quantity: number
+          status?: string
+          strike: number
+          symbol: string
+          user_id: string
+        }
+        Update: {
+          closed_at?: string | null
+          created_at?: string
+          entry_price?: number
+          exit_price?: number | null
+          id?: string
+          is_paper?: boolean
+          option_type?: string
+          order_id?: string
+          pnl?: number | null
+          quantity?: number
+          status?: string
+          strike?: number
+          symbol?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

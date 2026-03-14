@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -12,6 +12,7 @@ import { PositionsPanel } from '@/components/trading/PositionsPanel';
 import { RiskControls } from '@/components/trading/RiskControls';
 import { useMarketData } from '@/hooks/useMarketData';
 import { useBrokerConnection } from '@/hooks/useBrokerConnection';
+import { useTradeStore } from '@/hooks/useTradeStore';
 import { supabase } from '@/integrations/supabase/client';
 import { LogOut, Plug } from 'lucide-react';
 
@@ -21,6 +22,7 @@ const Dashboard = () => {
   const [brokerDialogOpen, setBrokerDialogOpen] = useState(false);
 
   const broker = useBrokerConnection();
+  const tradeStore = useTradeStore();
 
   const {
     marketData,
@@ -32,17 +34,34 @@ const Dashboard = () => {
     setRiskSettings,
     riskLimitReached,
     executeTrade,
+    exitPosition,
     dismissSignal,
   } = useMarketData(isPaperTrading);
 
-  const handleConfirmTrade = (signal: typeof signals[0]) => {
+  const handleConfirmTrade = async (signal: typeof signals[0]) => {
     const result = executeTrade(signal);
     if (result.success) {
       toast.success(`${isPaperTrading ? '📝 Paper' : '✅ Live'} order placed: ${signal.index} ${signal.strike} ${signal.optionType}`, {
-        description: `Qty: ${signal.suggestedQty} @ ₹${signal.currentPrice.toFixed(2)}`,
+        description: `Qty: ${signal.suggestedQty} @ ₹${signal.currentPrice.toFixed(2)} | Confidence: ${signal.confidence}%`,
       });
+      // Persist trade to database
+      await tradeStore.saveTrade(result.position, isPaperTrading);
     } else {
       toast.error('Order blocked', { description: result.reason });
+    }
+  };
+
+  const handleExitPosition = async (positionId: string) => {
+    const pos = positions.find(p => p.id === positionId);
+    if (pos) {
+      // Close in DB if we have a dbId
+      if (pos.dbId) {
+        await tradeStore.closeTrade(pos.dbId, pos.currentPrice, pos.pnl);
+      }
+      exitPosition(positionId);
+      toast.info(`Position closed: ${pos.symbol} ${pos.strike} ${pos.optionType}`, {
+        description: `P&L: ${pos.pnl >= 0 ? '+' : ''}₹${pos.pnl.toFixed(2)}`,
+      });
     }
   };
 
@@ -182,12 +201,14 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* Bottom - Positions */}
+      {/* Bottom - Positions & History */}
       <div className="px-4 pb-3 h-[200px] flex-shrink-0">
         <PositionsPanel
           positions={positions}
           dailyPnL={dailyPnL}
           tradesToday={tradesToday}
+          onExitPosition={handleExitPosition}
+          tradeHistory={tradeStore.closedTrades}
         />
       </div>
 
