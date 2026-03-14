@@ -9,6 +9,18 @@ interface SignalPanelProps {
   riskLimitReached: boolean;
 }
 
+function ConfidenceBadge({ confidence }: { confidence: number }) {
+  const color = confidence >= 75 ? 'text-profit bg-profit/20' 
+    : confidence >= 50 ? 'text-warning bg-warning/20' 
+    : 'text-muted-foreground bg-muted';
+  
+  return (
+    <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-bold ${color}`}>
+      {confidence}%
+    </span>
+  );
+}
+
 export function SignalPanel({ signals, onConfirm, onDismiss, riskLimitReached }: SignalPanelProps) {
   return (
     <div className="panel flex flex-col h-full">
@@ -38,6 +50,7 @@ export function SignalPanel({ signals, onConfirm, onDismiss, riskLimitReached }:
                 <span className="text-xs font-semibold text-signal">{signal.strategy}</span>
               </div>
               <div className="flex items-center gap-1">
+                <ConfidenceBadge confidence={signal.confidence} />
                 <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
                   signal.strength === 'HIGH' ? 'bg-profit/20 text-profit' : 'bg-warning/20 text-warning'
                 }`}>

@@ -42,6 +42,7 @@ export interface TradeSignal {
   suggestedQty: number;
   timestamp: number;
   strength: 'HIGH' | 'MEDIUM';
+  confidence: number; // 0-100
 }
 
 export interface Position {
@@ -55,6 +56,7 @@ export interface Position {
   currentPrice: number;
   pnl: number;
   timestamp: number;
+  dbId?: string; // database trade id for persistence
 }
 
 export interface RiskSettings {
@@ -95,52 +97,128 @@ function generateOptionChain(spotPrice: number, stepSize: number): OptionData[] 
   return strikes;
 }
 
+function computeConfidence(factors: number[]): number {
+  // Average of factor scores, clamped 0-100
+  const avg = factors.reduce((s, f) => s + f, 0) / factors.length;
+  return Math.max(0, Math.min(100, Math.round(avg)));
+}
+
 function generateSignals(data: MarketData): TradeSignal[] {
   const signals: TradeSignal[] = [];
   const now = Date.now();
 
-  // PCR Reversal - NIFTY
-  if (data.niftyPCR < 0.8) {
-    const atmOption = data.niftyChain.find(o => o.isATM);
-    if (atmOption && atmOption.putOIChange > 0) {
-      signals.push({
-        id: `sig-${now}-1`,
-        index: 'NIFTY',
-        strike: atmOption.strike,
-        optionType: 'PE',
-        strategy: 'PCR Reversal',
-        reason: `PCR ${data.niftyPCR.toFixed(2)} < 0.8, Put OI building up`,
-        currentPrice: atmOption.putLTP,
-        suggestedQty: 50,
-        timestamp: now,
-        strength: 'HIGH',
-      });
-    }
-  }
-
-  if (data.niftyPCR > 1.2) {
-    const atmOption = data.niftyChain.find(o => o.isATM);
-    if (atmOption && atmOption.callOIChange > 0) {
-      signals.push({
-        id: `sig-${now}-2`,
-        index: 'NIFTY',
-        strike: atmOption.strike,
-        optionType: 'CE',
-        strategy: 'PCR Reversal',
-        reason: `PCR ${data.niftyPCR.toFixed(2)} > 1.2, Call OI building up`,
-        currentPrice: atmOption.callLTP,
-        suggestedQty: 50,
-        timestamp: now,
-        strength: 'HIGH',
-      });
-    }
-  }
-
-  // ATM Momentum
   const niftyATM = data.niftyChain.find(o => o.isATM);
-  if (niftyATM && niftyATM.callVolume > 7000 && niftyATM.callOIChange > 2000) {
+  if (!niftyATM) return signals;
+
+  // Find max OI strikes for wall detection
+  let maxCallOI = 0, maxCallOIStrike = 0;
+  let maxPutOI = 0, maxPutOIStrike = 0;
+  for (const row of data.niftyChain) {
+    if (row.callOI > maxCallOI) { maxCallOI = row.callOI; maxCallOIStrike = row.strike; }
+    if (row.putOI > maxPutOI) { maxPutOI = row.putOI; maxPutOIStrike = row.strike; }
+  }
+
+  // Strategy 1: PCR Reversal (OI buildup + price movement)
+  if (data.niftyPCR < 0.8 && niftyATM.putOIChange > 0) {
+    const pcrFactor = Math.min(100, ((0.8 - data.niftyPCR) / 0.3) * 100);
+    const oiFactor = Math.min(100, (niftyATM.putOIChange / 3000) * 100);
+    signals.push({
+      id: `sig-${now}-1`,
+      index: 'NIFTY',
+      strike: niftyATM.strike,
+      optionType: 'PE',
+      strategy: 'PCR Reversal',
+      reason: `PCR ${data.niftyPCR.toFixed(2)} < 0.8, Put OI building +${niftyATM.putOIChange.toLocaleString()}`,
+      currentPrice: niftyATM.putLTP,
+      suggestedQty: 50,
+      timestamp: now,
+      strength: 'HIGH',
+      confidence: computeConfidence([pcrFactor, oiFactor]),
+    });
+  }
+
+  if (data.niftyPCR > 1.2 && niftyATM.callOIChange > 0) {
+    const pcrFactor = Math.min(100, ((data.niftyPCR - 1.2) / 0.3) * 100);
+    const oiFactor = Math.min(100, (niftyATM.callOIChange / 3000) * 100);
+    signals.push({
+      id: `sig-${now}-2`,
+      index: 'NIFTY',
+      strike: niftyATM.strike,
+      optionType: 'CE',
+      strategy: 'PCR Reversal',
+      reason: `PCR ${data.niftyPCR.toFixed(2)} > 1.2, Call OI building +${niftyATM.callOIChange.toLocaleString()}`,
+      currentPrice: niftyATM.callLTP,
+      suggestedQty: 50,
+      timestamp: now,
+      strength: 'HIGH',
+      confidence: computeConfidence([pcrFactor, oiFactor]),
+    });
+  }
+
+  // Strategy 2: Call Wall Breakdown
+  if (maxCallOIStrike > 0 && data.niftySpot > maxCallOIStrike) {
+    const breakFactor = Math.min(100, ((data.niftySpot - maxCallOIStrike) / 50) * 100);
+    const volFactor = Math.min(100, (niftyATM.callVolume / 8000) * 100);
     signals.push({
       id: `sig-${now}-3`,
+      index: 'NIFTY',
+      strike: maxCallOIStrike,
+      optionType: 'CE',
+      strategy: 'Call Wall Breakdown',
+      reason: `Spot ${data.niftySpot.toFixed(0)} broke call resistance at ${maxCallOIStrike}, OI ${maxCallOI.toLocaleString()}`,
+      currentPrice: niftyATM.callLTP,
+      suggestedQty: 25,
+      timestamp: now,
+      strength: breakFactor > 60 ? 'HIGH' : 'MEDIUM',
+      confidence: computeConfidence([breakFactor, volFactor]),
+    });
+  }
+
+  // Strategy 3: Put Support Breakdown
+  if (maxPutOIStrike > 0 && data.niftySpot < maxPutOIStrike) {
+    const breakFactor = Math.min(100, ((maxPutOIStrike - data.niftySpot) / 50) * 100);
+    const volFactor = Math.min(100, (niftyATM.putVolume / 8000) * 100);
+    signals.push({
+      id: `sig-${now}-4`,
+      index: 'NIFTY',
+      strike: maxPutOIStrike,
+      optionType: 'PE',
+      strategy: 'Put Support Breakdown',
+      reason: `Spot ${data.niftySpot.toFixed(0)} broke put support at ${maxPutOIStrike}, OI ${maxPutOI.toLocaleString()}`,
+      currentPrice: niftyATM.putLTP,
+      suggestedQty: 25,
+      timestamp: now,
+      strength: breakFactor > 60 ? 'HIGH' : 'MEDIUM',
+      confidence: computeConfidence([breakFactor, volFactor]),
+    });
+  }
+
+  // Strategy 4: ATM Volatility Spike
+  if (niftyATM.callVolume > 7000 && niftyATM.putVolume > 7000) {
+    const volFactor = Math.min(100, ((niftyATM.callVolume + niftyATM.putVolume) / 20000) * 100);
+    const oiFactor = Math.min(100, ((Math.abs(niftyATM.callOIChange) + Math.abs(niftyATM.putOIChange)) / 6000) * 100);
+    const isBullish = niftyATM.callVolume > niftyATM.putVolume;
+    signals.push({
+      id: `sig-${now}-5`,
+      index: 'NIFTY',
+      strike: niftyATM.strike,
+      optionType: isBullish ? 'CE' : 'PE',
+      strategy: 'ATM Volatility Spike',
+      reason: `ATM volume surge: CE ${niftyATM.callVolume.toLocaleString()} + PE ${niftyATM.putVolume.toLocaleString()}`,
+      currentPrice: isBullish ? niftyATM.callLTP : niftyATM.putLTP,
+      suggestedQty: 25,
+      timestamp: now,
+      strength: volFactor > 70 ? 'HIGH' : 'MEDIUM',
+      confidence: computeConfidence([volFactor, oiFactor]),
+    });
+  }
+
+  // Strategy 5: ATM Momentum (existing)
+  if (niftyATM.callVolume > 7000 && niftyATM.callOIChange > 2000) {
+    const volFactor = Math.min(100, (niftyATM.callVolume / 10000) * 100);
+    const oiFactor = Math.min(100, (niftyATM.callOIChange / 4000) * 100);
+    signals.push({
+      id: `sig-${now}-6`,
       index: 'NIFTY',
       strike: niftyATM.strike,
       optionType: 'CE',
@@ -150,6 +228,7 @@ function generateSignals(data: MarketData): TradeSignal[] {
       suggestedQty: 25,
       timestamp: now,
       strength: 'MEDIUM',
+      confidence: computeConfidence([volFactor, oiFactor]),
     });
   }
 
@@ -203,7 +282,6 @@ export function useMarketData(isPaperTrading: boolean) {
 
     setMarketData(data);
 
-    // Generate signals
     if (!riskLimitReached) {
       const newSignals = generateSignals(data);
       if (newSignals.length > 0) {
@@ -214,7 +292,6 @@ export function useMarketData(isPaperTrading: boolean) {
       }
     }
 
-    // Update position prices
     setPositions(prev =>
       prev.map(p => {
         const priceChange = (Math.random() - 0.48) * 5;
@@ -227,11 +304,10 @@ export function useMarketData(isPaperTrading: boolean) {
 
   useEffect(() => {
     updateData();
-    const interval = setInterval(updateData, 3000);
+    const interval = setInterval(updateData, 2000); // 2 second refresh
     return () => clearInterval(interval);
   }, [updateData]);
 
-  // Check risk limits
   useEffect(() => {
     const totalPnL = positions.reduce((s, p) => s + p.pnl, 0);
     setDailyPnL(totalPnL);
@@ -245,13 +321,13 @@ export function useMarketData(isPaperTrading: boolean) {
     const cooldownMs = riskSettings.cooldownMinutes * 60 * 1000;
 
     if (now - lastTradeTime < cooldownMs) {
-      return { success: false, reason: `Cooldown: wait ${riskSettings.cooldownMinutes}min between trades` };
+      return { success: false as const, reason: `Cooldown: wait ${riskSettings.cooldownMinutes}min between trades` };
     }
     if (tradesToday >= riskSettings.maxTradesPerDay) {
-      return { success: false, reason: 'Max daily trades reached' };
+      return { success: false as const, reason: 'Max daily trades reached' };
     }
     if (dailyPnL <= -riskSettings.maxDailyLoss) {
-      return { success: false, reason: 'Daily loss limit reached' };
+      return { success: false as const, reason: 'Daily loss limit reached' };
     }
 
     const position: Position = {
@@ -272,8 +348,12 @@ export function useMarketData(isPaperTrading: boolean) {
     setLastTradeTime(now);
     setSignals(prev => prev.filter(s => s.id !== signal.id));
 
-    return { success: true, position };
+    return { success: true as const, position };
   }, [isPaperTrading, lastTradeTime, tradesToday, dailyPnL, riskSettings]);
+
+  const exitPosition = useCallback((positionId: string) => {
+    setPositions(prev => prev.filter(p => p.id !== positionId));
+  }, []);
 
   const dismissSignal = useCallback((signalId: string) => {
     setSignals(prev => prev.filter(s => s.id !== signalId));
@@ -289,6 +369,7 @@ export function useMarketData(isPaperTrading: boolean) {
     setRiskSettings,
     riskLimitReached,
     executeTrade,
+    exitPosition,
     dismissSignal,
   };
 }
