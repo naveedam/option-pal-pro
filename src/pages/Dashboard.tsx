@@ -51,13 +51,12 @@ const Dashboard = () => {
     if (isPaperTrading) {
       // Paper trade - local simulation
       const result = executePaperTrade(signal);
-      if (result.success) {
+      if (result.success === true) {
         toast.success(`📝 Paper order placed: ${signal.index} ${signal.strike} ${signal.optionType}`, {
           description: `Qty: ${signal.suggestedQty} @ ₹${signal.currentPrice.toFixed(2)} | Confidence: ${signal.confidence}%`,
         });
         await tradeStore.saveTrade(result.position, true);
-      }
-      if (!result.success) {
+      } else {
         toast.error('Order blocked', { description: result.reason });
       }
     } else {
