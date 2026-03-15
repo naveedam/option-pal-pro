@@ -26,47 +26,54 @@ Deno.serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } }
     );
 
-    const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(
-      authHeader.replace("Bearer ", "")
-    );
-    if (claimsError || !claimsData?.claims) {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const userId = claimsData.claims.sub;
+    const userId = user.id;
     const { action, ...payload } = await req.json();
+
+    const adminClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
 
     switch (action) {
       case "login": {
-        const { consumerKey, consumerSecret, userId: neoUserId, password } = payload;
+        const { consumerKey, userId: neoUserId, password, otp } = payload;
 
-        if (!consumerKey || !consumerSecret || !neoUserId || !password) {
+        if (!consumerKey || !neoUserId || !password || !otp) {
           return new Response(
             JSON.stringify({ error: "All credential fields are required" }),
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
 
-        // In production, this calls the Kotak Neo login API:
+        // In production, call Kotak Neo login API:
         // POST https://gw-napi.kotaksecurities.com/login/1.0/login/v2/validate
-        // For now, simulate the OTP generation step
+        // with { userid, password, otp } + consumer key auth header
+        // For now, simulate successful session generation
+        const accessToken = `neo_${crypto.randomUUID().replace(/-/g, "")}`;
         const sessionId = crypto.randomUUID();
-
-        // Store partial session (awaiting OTP)
-        const adminClient = createClient(
-          Deno.env.get("SUPABASE_URL")!,
-          Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-        );
+        const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000); // 8 hours
 
         await adminClient.from("broker_sessions").upsert(
           {
             user_id: userId,
             broker: "kotak_neo",
             session_token: sessionId,
-            is_active: false,
+            access_token: accessToken,
+            is_active: true,
+            connected_at: new Date().toISOString(),
+            expires_at: expiresAt.toISOString(),
             updated_at: new Date().toISOString(),
           },
           { onConflict: "user_id,broker" }
@@ -75,53 +82,6 @@ Deno.serve(async (req) => {
         return new Response(
           JSON.stringify({
             success: true,
-            step: "otp_required",
-            sessionId,
-            message: "OTP sent to registered mobile number",
-          }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      case "verify_otp": {
-        const { otp, sessionId } = payload;
-
-        if (!otp || !sessionId) {
-          return new Response(
-            JSON.stringify({ error: "OTP and session ID are required" }),
-            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-
-        // In production, this calls:
-        // POST https://gw-napi.kotaksecurities.com/login/1.0/login/v2/validate
-        // with the OTP to get the access token
-        // For now, simulate successful verification
-        const accessToken = `neo_${crypto.randomUUID().replace(/-/g, "")}`;
-        const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000); // 8 hours
-
-        const adminClient = createClient(
-          Deno.env.get("SUPABASE_URL")!,
-          Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-        );
-
-        await adminClient
-          .from("broker_sessions")
-          .update({
-            access_token: accessToken,
-            is_active: true,
-            connected_at: new Date().toISOString(),
-            expires_at: expiresAt.toISOString(),
-            updated_at: new Date().toISOString(),
-          })
-          .eq("user_id", userId)
-          .eq("broker", "kotak_neo")
-          .eq("session_token", sessionId);
-
-        return new Response(
-          JSON.stringify({
-            success: true,
-            step: "connected",
             message: "Broker connected successfully",
             expiresAt: expiresAt.toISOString(),
           }),
@@ -151,11 +111,6 @@ Deno.serve(async (req) => {
       }
 
       case "disconnect": {
-        const adminClient = createClient(
-          Deno.env.get("SUPABASE_URL")!,
-          Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-        );
-
         await adminClient
           .from("broker_sessions")
           .update({
