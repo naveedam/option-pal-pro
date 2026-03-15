@@ -56,7 +56,8 @@ const Dashboard = () => {
           description: `Qty: ${signal.suggestedQty} @ ₹${signal.currentPrice.toFixed(2)} | Confidence: ${signal.confidence}%`,
         });
         await tradeStore.saveTrade(result.position, true);
-      } else if (!result.success) {
+      }
+      if (!result.success) {
         toast.error('Order blocked', { description: result.reason });
       }
     } else {
