@@ -404,7 +404,9 @@ export function useMarketData(isPaperTrading: boolean) {
     riskSettings,
     setRiskSettings,
     riskLimitReached,
-    executeTrade,
+    executePaperTrade,
+    validateRiskLimits,
+    addLivePosition,
     exitPosition,
     dismissSignal,
   };
