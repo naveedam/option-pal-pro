@@ -316,23 +316,23 @@ export function useMarketData(isPaperTrading: boolean) {
     }
   }, [positions, tradesToday, riskSettings]);
 
-  const executeTrade = useCallback((signal: TradeSignal) => {
+  const executePaperTrade = useCallback((signal: TradeSignal): { success: true; position: Position } | { success: false; reason: string } => {
     const now = Date.now();
     const cooldownMs = riskSettings.cooldownMinutes * 60 * 1000;
 
     if (now - lastTradeTime < cooldownMs) {
-      return { success: false as const, reason: `Cooldown: wait ${riskSettings.cooldownMinutes}min between trades` };
+      return { success: false, reason: `Cooldown: wait ${riskSettings.cooldownMinutes}min between trades` };
     }
     if (tradesToday >= riskSettings.maxTradesPerDay) {
-      return { success: false as const, reason: 'Max daily trades reached' };
+      return { success: false, reason: 'Max daily trades reached' };
     }
     if (dailyPnL <= -riskSettings.maxDailyLoss) {
-      return { success: false as const, reason: 'Daily loss limit reached' };
+      return { success: false, reason: 'Daily loss limit reached' };
     }
 
     const position: Position = {
       id: `pos-${now}`,
-      orderId: isPaperTrading ? `PAPER-${now}` : `NEO-${now}`,
+      orderId: `PAPER-${now}`,
       symbol: signal.index,
       strike: signal.strike,
       optionType: signal.optionType,
@@ -348,8 +348,44 @@ export function useMarketData(isPaperTrading: boolean) {
     setLastTradeTime(now);
     setSignals(prev => prev.filter(s => s.id !== signal.id));
 
-    return { success: true as const, position };
-  }, [isPaperTrading, lastTradeTime, tradesToday, dailyPnL, riskSettings]);
+    return { success: true, position };
+  }, [lastTradeTime, tradesToday, dailyPnL, riskSettings]);
+
+  const validateRiskLimits = useCallback((): { ok: boolean; reason?: string } => {
+    const now = Date.now();
+    const cooldownMs = riskSettings.cooldownMinutes * 60 * 1000;
+    if (now - lastTradeTime < cooldownMs) {
+      return { ok: false, reason: `Cooldown: wait ${riskSettings.cooldownMinutes}min between trades` };
+    }
+    if (tradesToday >= riskSettings.maxTradesPerDay) {
+      return { ok: false, reason: 'Max daily trades reached' };
+    }
+    if (dailyPnL <= -riskSettings.maxDailyLoss) {
+      return { ok: false, reason: 'Daily loss limit reached' };
+    }
+    return { ok: true };
+  }, [lastTradeTime, tradesToday, dailyPnL, riskSettings]);
+
+  const addLivePosition = useCallback((signal: TradeSignal, orderId: string) => {
+    const now = Date.now();
+    const position: Position = {
+      id: `pos-${now}`,
+      orderId,
+      symbol: signal.index,
+      strike: signal.strike,
+      optionType: signal.optionType,
+      quantity: signal.suggestedQty,
+      entryPrice: signal.currentPrice,
+      currentPrice: signal.currentPrice,
+      pnl: 0,
+      timestamp: now,
+    };
+    setPositions(prev => [position, ...prev]);
+    setTradesToday(prev => prev + 1);
+    setLastTradeTime(now);
+    setSignals(prev => prev.filter(s => s.id !== signal.id));
+    return position;
+  }, []);
 
   const exitPosition = useCallback((positionId: string) => {
     setPositions(prev => prev.filter(p => p.id !== positionId));
@@ -368,7 +404,9 @@ export function useMarketData(isPaperTrading: boolean) {
     riskSettings,
     setRiskSettings,
     riskLimitReached,
-    executeTrade,
+    executePaperTrade,
+    validateRiskLimits,
+    addLivePosition,
     exitPosition,
     dismissSignal,
   };

@@ -2,3 +2,6 @@ project_id = "xaxxdmvtfydqalswrneq"
 
 [functions.kotak-neo-auth]
 verify_jwt = false
+
+[functions.kotak-place-order]
+verify_jwt = false

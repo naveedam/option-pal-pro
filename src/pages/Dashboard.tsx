@@ -33,21 +33,68 @@ const Dashboard = () => {
     riskSettings,
     setRiskSettings,
     riskLimitReached,
-    executeTrade,
+    executePaperTrade,
+    validateRiskLimits,
+    addLivePosition,
     exitPosition,
     dismissSignal,
   } = useMarketData(isPaperTrading);
 
   const handleConfirmTrade = async (signal: typeof signals[0]) => {
-    const result = executeTrade(signal);
-    if (result.success) {
-      toast.success(`${isPaperTrading ? '📝 Paper' : '✅ Live'} order placed: ${signal.index} ${signal.strike} ${signal.optionType}`, {
-        description: `Qty: ${signal.suggestedQty} @ ₹${signal.currentPrice.toFixed(2)} | Confidence: ${signal.confidence}%`,
-      });
-      // Persist trade to database
-      await tradeStore.saveTrade(result.position, isPaperTrading);
+    // Safety checks
+    const riskCheck = validateRiskLimits();
+    if (!riskCheck.ok) {
+      toast.error('Order blocked', { description: riskCheck.reason });
+      return;
+    }
+
+    if (isPaperTrading) {
+      // Paper trade - local simulation
+      const result = executePaperTrade(signal);
+      if (result.success === true) {
+        toast.success(`📝 Paper order placed: ${signal.index} ${signal.strike} ${signal.optionType}`, {
+          description: `Qty: ${signal.suggestedQty} @ ₹${signal.currentPrice.toFixed(2)} | Confidence: ${signal.confidence}%`,
+        });
+        await tradeStore.saveTrade(result.position, true);
+      } else {
+        toast.error('Order blocked', { description: result.reason });
+      }
     } else {
-      toast.error('Order blocked', { description: result.reason });
+      // Live trade - call Kotak Neo API via backend
+      if (!broker.isConnected) {
+        toast.error('Broker not connected', { description: 'Please connect Kotak Neo first.' });
+        setBrokerDialogOpen(true);
+        return;
+      }
+
+      try {
+        const { data, error } = await supabase.functions.invoke('kotak-place-order', {
+          body: {
+            symbol: signal.index,
+            strike: signal.strike,
+            optionType: signal.optionType,
+            quantity: signal.suggestedQty,
+            orderType: 'MARKET',
+            product: 'MIS',
+            transactionType: 'BUY',
+          },
+        });
+
+        if (error) throw new Error(error.message || 'Failed to place order');
+
+        if (data?.success) {
+          const position = addLivePosition(signal, data.orderId);
+          toast.success(`✅ Live order placed: ${signal.index} ${signal.strike} ${signal.optionType}`, {
+            description: `Qty: ${signal.suggestedQty} | Order ID: ${data.orderId}`,
+          });
+          // Trade already persisted by edge function, but update local dbId
+          position.dbId = data.orderId;
+        } else {
+          toast.error('Order rejected by broker', { description: data?.error || 'Unknown error' });
+        }
+      } catch (err: any) {
+        toast.error('Order failed', { description: err.message || 'Could not reach broker API' });
+      }
     }
   };
 
