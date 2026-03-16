@@ -134,7 +134,7 @@ const Dashboard = () => {
           <h1 className="font-mono text-sm font-bold text-primary terminal-glow tracking-wider">
             OPTIQ<span className="text-muted-foreground">.TRADE</span>
           </h1>
-          <BrokerStatus isConnected={broker.isConnected} isPaperTrading={isPaperTrading} />
+          <BrokerStatus isConnected={broker.isConnected} isPaperTrading={isPaperTrading} expiresAt={broker.expiresAt} />
           {!broker.isConnected && (
             <Button
               variant="terminal"
