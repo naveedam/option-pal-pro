@@ -5,6 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { BrokerStatus } from '@/components/trading/BrokerStatus';
 import { BrokerLoginDialog } from '@/components/trading/BrokerLoginDialog';
+import { FeedStatus } from '@/components/trading/FeedStatus';
 import { SpotTicker } from '@/components/trading/SpotTicker';
 import { OptionChainTable } from '@/components/trading/OptionChainTable';
 import { SignalPanel } from '@/components/trading/SignalPanel';
