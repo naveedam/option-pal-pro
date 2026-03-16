@@ -80,20 +80,28 @@ const Dashboard = () => {
           },
         });
 
-        if (error) throw new Error(error.message || 'Failed to place order');
+        if (error) {
+          console.error('Edge function error:', error);
+          toast.error('Order failed', { description: error.message || 'Failed to place order' });
+          return;
+        }
 
         if (data?.success) {
           const position = addLivePosition(signal, data.orderId);
           toast.success(`✅ Live order placed: ${signal.index} ${signal.strike} ${signal.optionType}`, {
             description: `Qty: ${signal.suggestedQty} | Order ID: ${data.orderId}`,
           });
-          // Trade already persisted by edge function, but update local dbId
           position.dbId = data.orderId;
         } else {
-          toast.error('Order rejected by broker', { description: data?.error || 'Unknown error' });
+          toast.error('Order rejected', {
+            description: data?.error || 'Broker order failed. Please reconnect Kotak Neo.',
+          });
         }
       } catch (err: any) {
-        toast.error('Order failed', { description: err.message || 'Could not reach broker API' });
+        console.error('Order placement error:', err);
+        toast.error('Order failed', {
+          description: err.message || 'Broker order failed. Please reconnect Kotak Neo.',
+        });
       }
     }
   };
