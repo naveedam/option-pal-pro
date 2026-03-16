@@ -128,10 +128,17 @@ const Dashboard = () => {
 
   if (!marketData) {
     return (
-      <div className="h-screen flex items-center justify-center bg-background">
-        <div className="text-primary terminal-glow font-mono animate-pulse-glow">
-          Initializing market data engine...
+      <div className="h-screen flex flex-col items-center justify-center bg-background gap-3">
+        <div className="text-primary terminal-glow font-mono animate-pulse">
+          Connecting to market feed...
         </div>
+        {feedHealth.status === 'error' && (
+          <div className="text-loss text-xs font-mono max-w-md text-center">
+            {feedHealth.errorMessage || 'Unable to connect to market feed.'}
+            <br />
+            <span className="text-muted-foreground">Please ensure your broker is connected.</span>
+          </div>
+        )}
       </div>
     );
   }
