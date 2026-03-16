@@ -16,7 +16,7 @@ Deno.serve(async (req) => {
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      return new Response(JSON.stringify({ success: false, error: "Unauthorized" }), {
         status: 401, headers: jsonHeaders,
       });
     }
@@ -29,50 +29,104 @@ Deno.serve(async (req) => {
 
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      console.error("Auth failed:", userError?.message);
+      return new Response(JSON.stringify({ success: false, error: "Unauthorized" }), {
         status: 401, headers: jsonHeaders,
       });
     }
 
     const userId = user.id;
-    const { symbol, strike, optionType, quantity, orderType, product, transactionType } = await req.json();
 
-    // Validate payload
-    if (!symbol || !strike || !optionType || !quantity) {
-      return new Response(JSON.stringify({ success: false, error: "Missing required order fields" }), {
+    let body;
+    try {
+      body = await req.json();
+    } catch {
+      return new Response(JSON.stringify({ success: false, error: "Invalid JSON payload" }), {
         status: 400, headers: jsonHeaders,
       });
     }
 
-    // Retrieve active broker session
+    const { symbol, strike, optionType, quantity, orderType, product, transactionType } = body;
+
+    // STEP 5: Validate order payload
+    if (!symbol || typeof symbol !== "string") {
+      return new Response(JSON.stringify({ success: false, error: "Missing or invalid symbol" }), {
+        status: 400, headers: jsonHeaders,
+      });
+    }
+    if (strike === undefined || strike === null || isNaN(Number(strike))) {
+      return new Response(JSON.stringify({ success: false, error: "Missing or invalid strike price" }), {
+        status: 400, headers: jsonHeaders,
+      });
+    }
+    if (!optionType || !["CE", "PE"].includes(optionType)) {
+      return new Response(JSON.stringify({ success: false, error: "optionType must be CE or PE" }), {
+        status: 400, headers: jsonHeaders,
+      });
+    }
+    if (!quantity || Number(quantity) <= 0) {
+      return new Response(JSON.stringify({ success: false, error: "quantity must be greater than 0" }), {
+        status: 400, headers: jsonHeaders,
+      });
+    }
+
+    // STEP 2: Retrieve active broker session using admin client
     const adminClient = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    const { data: session } = await adminClient
+    const { data: session, error: sessionError } = await adminClient
       .from("broker_sessions")
-      .select("access_token, session_token, is_active, expires_at")
+      .select("*")
       .eq("user_id", userId)
       .eq("broker", "kotak_neo")
       .eq("is_active", true)
+      .order("created_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
 
+    if (sessionError) {
+      console.error("Session query error:", sessionError.message);
+      return new Response(JSON.stringify({
+        success: false,
+        error: "Failed to retrieve broker session. Please try again.",
+      }), { status: 500, headers: jsonHeaders });
+    }
+
     if (!session || !session.access_token) {
-      return new Response(JSON.stringify({ success: false, error: "Broker not connected. Please login first." }), {
-        status: 403, headers: jsonHeaders,
-      });
+      console.error("No active broker session found for user:", userId);
+      return new Response(JSON.stringify({
+        success: false,
+        error: "No active Kotak broker session found. Please reconnect your broker.",
+      }), { status: 403, headers: jsonHeaders });
     }
 
     // Check session expiry
     if (session.expires_at && new Date(session.expires_at) < new Date()) {
-      return new Response(JSON.stringify({ success: false, error: "Broker session expired. Please reconnect." }), {
-        status: 403, headers: jsonHeaders,
-      });
+      console.error("Broker session expired at:", session.expires_at);
+      await adminClient
+        .from("broker_sessions")
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq("id", session.id);
+
+      return new Response(JSON.stringify({
+        success: false,
+        error: "Broker session expired. Please reconnect Kotak Neo.",
+      }), { status: 403, headers: jsonHeaders });
     }
 
+    // STEP 3: Debug logging before Kotak API call
+    console.log("Placing Kotak order", {
+      userId,
+      symbol,
+      strike,
+      optionType,
+      quantity,
+      tokenPrefix: session.access_token.substring(0, 8) + "...",
+    });
+
     // Call Kotak Neo Order Placement API
-    // POST https://gw-napi.kotaksecurities.com/Orders/2.0/quick/order/rule/ms/place
     try {
       const kotakResponse = await fetch(
         "https://gw-napi.kotaksecurities.com/Orders/2.0/quick/order/rule/ms/place",
@@ -84,20 +138,19 @@ Deno.serve(async (req) => {
             "sid": session.session_token || "",
           },
           body: JSON.stringify({
-            am: "NO", // after market
-            dq: "0", // disclosed qty
+            am: "NO",
+            dq: "0",
             es: optionType === "CE" || optionType === "PE" ? "nse_fo" : "nse_cm",
             mp: "0",
             pc: product || "MIS",
             pf: "N",
-            pr: "0", // market order price = 0
+            pr: "0",
             pt: orderType || "MKT",
             qt: String(quantity),
             rt: "DAY",
             tp: "0",
             ts: symbol,
             tt: transactionType || "B",
-            // Additional fields for options
             st: String(strike),
             ot: optionType,
           }),
@@ -105,18 +158,18 @@ Deno.serve(async (req) => {
       );
 
       const kotakData = await kotakResponse.json();
+      console.log("Kotak response status:", kotakResponse.status, "data:", JSON.stringify(kotakData));
 
       if (kotakResponse.ok && kotakData?.nOrdNo) {
-        // Success - return broker order ID
         // Persist the trade
         await adminClient.from("trades").insert({
           user_id: userId,
           order_id: kotakData.nOrdNo,
           symbol,
-          strike,
+          strike: Number(strike),
           option_type: optionType,
-          quantity,
-          entry_price: 0, // Will be updated with actual fill price
+          quantity: Number(quantity),
+          entry_price: 0,
           status: "open",
           is_paper: false,
         });
@@ -127,14 +180,15 @@ Deno.serve(async (req) => {
           message: `Order placed: ${symbol} ${strike} ${optionType} Qty ${quantity}`,
         }), { headers: jsonHeaders });
       } else {
-        // Broker rejected the order
-        const errorMsg = kotakData?.errMsg || kotakData?.message || "Order rejected by broker";
+        // STEP 4: Return detailed broker errors
+        const errorMsg = kotakData?.errMsg || kotakData?.message || kotakData?.error || "Order rejected by broker";
+        console.error("Kotak API rejected order:", errorMsg, kotakData);
         return new Response(JSON.stringify({ success: false, error: errorMsg }), {
           status: 400, headers: jsonHeaders,
         });
       }
     } catch (brokerErr) {
-      console.error("Kotak API error:", brokerErr);
+      console.error("Kotak API network error:", brokerErr);
       return new Response(JSON.stringify({
         success: false,
         error: "Failed to connect to broker API. Please try again.",
@@ -142,8 +196,9 @@ Deno.serve(async (req) => {
     }
   } catch (error) {
     console.error("Order endpoint error:", error);
-    return new Response(JSON.stringify({ error: error.message || "Internal server error" }), {
-      status: 500, headers: jsonHeaders,
-    });
+    return new Response(JSON.stringify({
+      success: false,
+      error: error.message || "Internal server error",
+    }), { status: 500, headers: jsonHeaders });
   }
 });
