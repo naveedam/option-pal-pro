@@ -5,6 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { BrokerStatus } from '@/components/trading/BrokerStatus';
 import { BrokerLoginDialog } from '@/components/trading/BrokerLoginDialog';
+import { FeedStatus } from '@/components/trading/FeedStatus';
 import { SpotTicker } from '@/components/trading/SpotTicker';
 import { OptionChainTable } from '@/components/trading/OptionChainTable';
 import { SignalPanel } from '@/components/trading/SignalPanel';
@@ -38,6 +39,7 @@ const Dashboard = () => {
     addLivePosition,
     exitPosition,
     dismissSignal,
+    feedHealth,
   } = useMarketData(isPaperTrading);
 
   const handleConfirmTrade = async (signal: typeof signals[0]) => {
@@ -126,10 +128,17 @@ const Dashboard = () => {
 
   if (!marketData) {
     return (
-      <div className="h-screen flex items-center justify-center bg-background">
-        <div className="text-primary terminal-glow font-mono animate-pulse-glow">
-          Initializing market data engine...
+      <div className="h-screen flex flex-col items-center justify-center bg-background gap-3">
+        <div className="text-primary terminal-glow font-mono animate-pulse">
+          Connecting to market feed...
         </div>
+        {feedHealth.status === 'error' && (
+          <div className="text-loss text-xs font-mono max-w-md text-center">
+            {feedHealth.errorMessage || 'Unable to connect to market feed.'}
+            <br />
+            <span className="text-muted-foreground">Please ensure your broker is connected.</span>
+          </div>
+        )}
       </div>
     );
   }
@@ -143,6 +152,7 @@ const Dashboard = () => {
             OPTIQ<span className="text-muted-foreground">.TRADE</span>
           </h1>
           <BrokerStatus isConnected={broker.isConnected} isPaperTrading={isPaperTrading} expiresAt={broker.expiresAt} />
+          <FeedStatus health={feedHealth} />
           {!broker.isConnected && (
             <Button
               variant="terminal"
