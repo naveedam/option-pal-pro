@@ -39,6 +39,7 @@ const Dashboard = () => {
     addLivePosition,
     exitPosition,
     dismissSignal,
+    feedHealth,
   } = useMarketData(isPaperTrading);
 
   const handleConfirmTrade = async (signal: typeof signals[0]) => {
