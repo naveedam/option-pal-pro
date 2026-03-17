@@ -201,7 +201,7 @@ function generateSignals(data: MarketData): TradeSignal[] {
 }
 
 // ─── Hook ────────────────────────────────────────────────────────────
-export function useMarketData(isPaperTrading: boolean) {
+export function useMarketData(isPaperTrading: boolean, brokerConnected: boolean = false) {
   const [marketData, setMarketData] = useState<MarketData | null>(null);
   const [signals, setSignals] = useState<TradeSignal[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
