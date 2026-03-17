@@ -95,25 +95,24 @@ const Dashboard = () => {
 
   const handleLogout = async () => { await supabase.auth.signOut(); };
 
-  // Show broker connect prompt when broker is disconnected (not infinite loading)
-  const showBrokerPrompt = !marketData && (feedHealth.status === 'broker_disconnected' || feedHealth.status === 'error');
-
-  if (!marketData && !showBrokerPrompt) {
+  // Show loading only while broker status is still being checked
+  if (broker.loading) {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-background gap-3">
         <div className="text-primary terminal-glow font-mono animate-pulse">
-          Connecting to market feed...
+          Checking broker connection...
         </div>
       </div>
     );
   }
 
-  if (showBrokerPrompt) {
+  // Broker not connected — show connect prompt (no auto-refresh)
+  if (!broker.isConnected && !marketData) {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-background gap-4">
         <Plug className="w-10 h-10 text-warning" />
         <div className="text-foreground font-mono text-sm text-center">
-          {feedHealth.errorMessage || 'Broker not connected'}
+          Broker not connected
         </div>
         <p className="text-muted-foreground text-xs text-center max-w-sm">
           Connect your Kotak Neo broker to stream live market data.
@@ -124,7 +123,18 @@ const Dashboard = () => {
         <Button variant="ghost" size="sm" onClick={handleLogout} className="text-muted-foreground text-xs">
           Sign out
         </Button>
-        <BrokerLoginDialog open={brokerDialogOpen} onOpenChange={setBrokerDialogOpen} onConnected={() => { broker.refresh(); window.location.reload(); }} />
+        <BrokerLoginDialog open={brokerDialogOpen} onOpenChange={setBrokerDialogOpen} onConnected={() => broker.refresh()} />
+      </div>
+    );
+  }
+
+  // Broker connected but waiting for first market data tick
+  if (!marketData) {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center bg-background gap-3">
+        <div className="text-primary terminal-glow font-mono animate-pulse">
+          Connecting to market feed...
+        </div>
       </div>
     );
   }

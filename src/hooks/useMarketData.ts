@@ -243,11 +243,23 @@ export function useMarketData(isPaperTrading: boolean, brokerConnected: boolean 
   }, [riskLimitReached]);
 
   useEffect(() => {
+    // Only start the market feed when broker is connected
+    if (!brokerConnected) {
+      setFeedHealth({
+        status: 'broker_disconnected',
+        latencyMs: 0,
+        lastTickTime: null,
+        errorMessage: 'Broker not connected',
+        consecutiveErrors: 0,
+      });
+      return;
+    }
+
     const feed = new KotakMarketFeed(handleMarketData, setFeedHealth);
     feedRef.current = feed;
     feed.start();
     return () => feed.stop();
-  }, [handleMarketData]);
+  }, [handleMarketData, brokerConnected]);
 
   useEffect(() => {
     const totalPnL = positions.reduce((s, p) => s + p.pnl, 0);
