@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.kotak-place-order]
 verify_jwt = false
+
+[functions.kotak-market-data]
+verify_jwt = false
