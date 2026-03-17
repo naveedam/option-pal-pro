@@ -1,7 +1,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import type { MarketData, OptionData } from '@/hooks/useMarketData';
 
-export type FeedStatus = 'connected' | 'disconnected' | 'reconnecting' | 'error';
+export type FeedStatus = 'connected' | 'disconnected' | 'reconnecting' | 'error' | 'broker_disconnected';
 
 export interface FeedHealth {
   status: FeedStatus;
@@ -41,19 +41,13 @@ export class KotakMarketFeed {
 
   start() {
     this.stop();
-    this.fetchData(); // immediate first fetch
+    this.fetchData();
     this.intervalId = setInterval(() => this.fetchData(), POLL_INTERVAL_MS);
   }
 
   stop() {
-    if (this.intervalId) {
-      clearInterval(this.intervalId);
-      this.intervalId = null;
-    }
-    if (this.retryTimeoutId) {
-      clearTimeout(this.retryTimeoutId);
-      this.retryTimeoutId = null;
-    }
+    if (this.intervalId) { clearInterval(this.intervalId); this.intervalId = null; }
+    if (this.retryTimeoutId) { clearTimeout(this.retryTimeoutId); this.retryTimeoutId = null; }
     this.updateHealth({ status: 'disconnected' });
   }
 
@@ -62,24 +56,32 @@ export class KotakMarketFeed {
 
     try {
       const { data, error } = await supabase.functions.invoke('kotak-market-data', {
-        body: {
-          instruments: this.instruments,
-          strikeRange: 10,
-        },
+        body: { instruments: this.instruments, strikeRange: 10 },
       });
 
       if (error) {
         throw new Error(error.message || 'Edge function error');
       }
 
+      // Handle structured broker errors (returned as 200 with success: false)
       if (!data?.success) {
+        const code = data?.code;
+        if (code === 'NO_SESSION' || code === 'SESSION_EXPIRED') {
+          this.updateHealth({
+            status: 'broker_disconnected',
+            errorMessage: data?.error || 'Broker not connected',
+            consecutiveErrors: 0,
+          });
+          // Stop polling - no point retrying without a session
+          if (this.intervalId) { clearInterval(this.intervalId); this.intervalId = null; }
+          return;
+        }
         throw new Error(data?.error || 'Failed to fetch market data');
       }
 
       const latency = Date.now() - startTime;
       const raw = data.data;
 
-      // Validate critical fields
       const niftySpot = raw.niftySpot;
       const sensexSpot = raw.sensexSpot;
 
@@ -87,12 +89,8 @@ export class KotakMarketFeed {
         throw new Error('Invalid spot prices received');
       }
 
-      const niftyChain: OptionData[] = (raw.niftyChain || []).filter(
-        (r: any) => r.strike > 0
-      );
-      const sensexChain: OptionData[] = (raw.sensexChain || []).filter(
-        (r: any) => r.strike > 0
-      );
+      const niftyChain: OptionData[] = (raw.niftyChain || []).filter((r: any) => r.strike > 0);
+      const sensexChain: OptionData[] = (raw.sensexChain || []).filter((r: any) => r.strike > 0);
 
       const marketData: MarketData = {
         niftySpot: niftySpot || 0,
@@ -126,14 +124,11 @@ export class KotakMarketFeed {
         consecutiveErrors: newErrors,
       });
 
-      // If too many errors, back off polling
       if (newErrors >= 5 && this.intervalId) {
         clearInterval(this.intervalId);
         this.intervalId = null;
         const retryDelay = Math.min(BASE_RETRY_MS * newErrors, MAX_RETRY_INTERVAL_MS);
-        this.retryTimeoutId = setTimeout(() => {
-          this.start();
-        }, retryDelay);
+        this.retryTimeoutId = setTimeout(() => this.start(), retryDelay);
       }
     }
   }
