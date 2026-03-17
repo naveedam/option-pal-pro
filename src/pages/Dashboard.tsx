@@ -31,7 +31,7 @@ const Dashboard = () => {
     riskSettings, setRiskSettings, riskLimitReached,
     executePaperTrade, validateRiskLimits, addLivePosition,
     exitPosition, dismissSignal, feedHealth,
-  } = useMarketData(isPaperTrading);
+  } = useMarketData(isPaperTrading, broker.isConnected);
 
   const handleConfirmTrade = async (signal: typeof signals[0]) => {
     const riskCheck = validateRiskLimits();
