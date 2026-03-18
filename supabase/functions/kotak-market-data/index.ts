@@ -42,7 +42,6 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Get active broker session
     const { data: session, error: sessionError } = await adminClient
       .from("broker_sessions")
       .select("*")
@@ -55,14 +54,13 @@ Deno.serve(async (req) => {
 
     console.log("Session lookup:", { userId: user.id, found: !!session, error: sessionError?.message });
 
-    if (!session?.access_token) {
+    if (!session?.access_token || !session?.session_token) {
       return new Response(
-        JSON.stringify({ success: false, error: "Broker not connected. Please login to Kotak Neo.", code: "NO_SESSION" }),
+        JSON.stringify({ success: false, error: "Broker session invalid — reconnect required", code: "NO_SESSION" }),
         { status: 200, headers }
       );
     }
 
-    // Check expiry
     if (session.expires_at && new Date(session.expires_at) < new Date()) {
       await adminClient.from("broker_sessions")
         .update({ is_active: false, updated_at: new Date().toISOString() })
@@ -79,36 +77,47 @@ Deno.serve(async (req) => {
     const kotakHeaders = {
       "Authorization": `Bearer ${session.access_token}`,
       "Content-Type": "application/json",
-      "sid": session.session_token || "",
+      "sid": session.session_token,
     };
 
-    // Fetch spot quotes
-    console.log("Fetching spot quotes for:", instruments);
-    const spotResponse = await fetch(`${KOTAK_BASE}/Quote/2.0/quote`, {
+    // Fetch spot LTP
+    const instrumentTokens = instruments.map(i => getInstrumentToken(i));
+    console.log("Fetching LTP for tokens:", instrumentTokens);
+
+    const spotResponse = await fetch(`${KOTAK_BASE}/Quote/2.0/ltp`, {
       method: "POST",
       headers: kotakHeaders,
-      body: JSON.stringify({
-        instrumentTokens: instruments.map(i => getInstrumentToken(i)),
-        isIndex: true,
-      }),
+      body: JSON.stringify({ instrumentTokens }),
     });
 
-    const spotData = await spotResponse.json();
-    console.log("Kotak spot response:", { status: spotResponse.status, data: spotData });
+    const spotText = await spotResponse.text();
+    console.log("Kotak LTP status:", spotResponse.status);
+    console.log("Kotak LTP raw response:", spotText.substring(0, 500));
 
     if (!spotResponse.ok) {
       return new Response(
         JSON.stringify({
           success: false,
-          error: spotData?.errMsg || spotData?.message || "Failed to fetch spot data",
+          error: `Kotak API error (${spotResponse.status})`,
           code: "KOTAK_API_ERROR",
-          details: spotData,
+          status: spotResponse.status,
+          raw: spotText.substring(0, 300),
         }),
         { status: 200, headers }
       );
     }
 
-    // Parse and build result
+    let spotData: any;
+    try {
+      spotData = JSON.parse(spotText);
+    } catch {
+      return new Response(
+        JSON.stringify({ success: false, error: "Invalid JSON from Kotak API", code: "PARSE_ERROR", raw: spotText.substring(0, 300) }),
+        { status: 200, headers }
+      );
+    }
+
+    // Build result
     const result: Record<string, any> = { timestamp: Date.now() };
 
     for (const instrument of instruments) {
@@ -116,17 +125,20 @@ Deno.serve(async (req) => {
       const quote = findQuote(spotData, token);
       const spotPrice = quote?.ltp || 0;
       const change = quote?.change || 0;
-
-      if (spotPrice <= 0) {
-        console.warn(`Invalid spot price for ${instrument}:`, quote);
-        continue;
-      }
-
       const key = instrument.toLowerCase();
+
       result[`${key}Spot`] = spotPrice;
       result[`${key}Change`] = change;
 
-      // Option chain around ATM
+      if (spotPrice <= 0) {
+        console.warn(`No valid spot price for ${instrument}, skipping chain`);
+        result[`${key}Chain`] = [];
+        result[`${key}ATM`] = 0;
+        result[`${key}PCR`] = 0;
+        continue;
+      }
+
+      // Option chain
       const stepSize = instrument === "NIFTY" ? 50 : 100;
       const atmStrike = Math.round(spotPrice / stepSize) * stepSize;
 
@@ -142,13 +154,25 @@ Deno.serve(async (req) => {
         }),
       });
 
-      const chainData = await chainResponse.json();
-      console.log(`Kotak ${instrument} chain:`, { status: chainResponse.status, rows: chainData?.data?.length });
+      const chainText = await chainResponse.text();
+      console.log(`Kotak ${instrument} chain status:`, chainResponse.status);
 
-      if (!chainResponse.ok) {
-        console.error(`Chain API error for ${instrument}:`, chainData);
+      let chainData: any;
+      try {
+        chainData = JSON.parse(chainText);
+      } catch {
+        console.error(`Invalid chain JSON for ${instrument}:`, chainText.substring(0, 200));
         result[`${key}Chain`] = [];
         result[`${key}ATM`] = atmStrike;
+        result[`${key}PCR`] = 0;
+        continue;
+      }
+
+      if (!chainResponse.ok) {
+        console.error(`Chain API error for ${instrument}:`, chainResponse.status);
+        result[`${key}Chain`] = [];
+        result[`${key}ATM`] = atmStrike;
+        result[`${key}PCR`] = 0;
         continue;
       }
 
@@ -156,7 +180,6 @@ Deno.serve(async (req) => {
       result[`${key}Chain`] = chain;
       result[`${key}ATM`] = atmStrike;
 
-      // PCR
       const totalCallOI = chain.reduce((s: number, o: any) => s + (o.callOI || 0), 0);
       const totalPutOI = chain.reduce((s: number, o: any) => s + (o.putOI || 0), 0);
       result[`${key}PCR`] = totalCallOI > 0 ? Math.round((totalPutOI / totalCallOI) * 100) / 100 : 0;
