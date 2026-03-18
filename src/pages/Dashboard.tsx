@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback, memo } from 'react';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -33,6 +33,12 @@ const Dashboard = () => {
     exitPosition, dismissSignal, feedHealth, retryFeed,
   } = useMarketData(isPaperTrading, broker.isConnected);
 
+  const openBrokerDialog = useCallback(() => setBrokerDialogOpen(true), []);
+
+  const handleBrokerConnected = useCallback(() => {
+    broker.refresh();
+  }, [broker]);
+
   const handleConfirmTrade = async (signal: typeof signals[0]) => {
     const riskCheck = validateRiskLimits();
     if (!riskCheck.ok) {
@@ -53,7 +59,7 @@ const Dashboard = () => {
     } else {
       if (!broker.isConnected) {
         toast.error('Broker not connected', { description: 'Please connect Kotak Neo first.' });
-        setBrokerDialogOpen(true);
+        openBrokerDialog();
         return;
       }
       try {
@@ -95,170 +101,173 @@ const Dashboard = () => {
 
   const handleLogout = async () => { await supabase.auth.signOut(); };
 
-  // Show loading only while broker status is still being checked
-  if (broker.loading) {
-    return (
-      <div className="h-screen flex flex-col items-center justify-center bg-background gap-3">
-        <div className="text-primary terminal-glow font-mono animate-pulse">
-          Checking broker connection...
+  // Determine which content to render
+  const renderContent = () => {
+    // Loading broker status
+    if (broker.loading) {
+      return (
+        <div className="h-screen flex flex-col items-center justify-center bg-background gap-3">
+          <div className="text-primary terminal-glow font-mono animate-pulse">
+            Checking broker connection...
+          </div>
         </div>
-      </div>
-    );
-  }
+      );
+    }
 
-  // Broker not connected — show connect prompt (no auto-refresh)
-  if (!broker.isConnected && !marketData) {
-    return (
-      <div className="h-screen flex flex-col items-center justify-center bg-background gap-4">
-        <Plug className="w-10 h-10 text-warning" />
-        <div className="text-foreground font-mono text-sm text-center">
-          Broker not connected
-        </div>
-        <p className="text-muted-foreground text-xs text-center max-w-sm">
-          Connect your Kotak Neo broker to stream live market data.
-        </p>
-        <Button variant="default" onClick={() => setBrokerDialogOpen(true)} className="gap-2">
-          <Plug className="w-4 h-4" /> Connect Kotak Neo
-        </Button>
-        <Button variant="ghost" size="sm" onClick={handleLogout} className="text-muted-foreground text-xs">
-          Sign out
-        </Button>
-        <BrokerLoginDialog open={brokerDialogOpen} onOpenChange={setBrokerDialogOpen} onConnected={() => broker.refresh()} />
-      </div>
-    );
-  }
-
-  // Feed error state — show retry UI instead of infinite loading
-  if (!marketData && (feedHealth.status === 'error' || feedHealth.status === 'reconnecting')) {
-    return (
-      <div className="h-screen flex flex-col items-center justify-center bg-background gap-4">
-        <div className="text-destructive font-mono text-sm text-center">
-          ⚠ Market Feed Error
-        </div>
-        <p className="text-muted-foreground text-xs text-center max-w-sm">
-          {feedHealth.errorMessage || 'Unable to connect to market data feed.'}
-        </p>
-        <div className="flex gap-3">
-          <Button variant="default" size="sm" onClick={() => {
-            retryFeed();
-            broker.refresh();
-          }}>
-            Retry Connection
+    // Broker not connected
+    if (!broker.isConnected && !marketData) {
+      return (
+        <div className="h-screen flex flex-col items-center justify-center bg-background gap-4">
+          <Plug className="w-10 h-10 text-warning" />
+          <div className="text-foreground font-mono text-sm text-center">
+            Broker not connected
+          </div>
+          <p className="text-muted-foreground text-xs text-center max-w-sm">
+            Connect your Kotak Neo broker to stream live market data.
+          </p>
+          <Button variant="default" onClick={openBrokerDialog} className="gap-2">
+            <Plug className="w-4 h-4" /> Connect Kotak Neo
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setBrokerDialogOpen(true)}>
-            Reconnect Broker
+          <Button variant="ghost" size="sm" onClick={handleLogout} className="text-muted-foreground text-xs">
+            Sign out
           </Button>
         </div>
-        <Button variant="ghost" size="sm" onClick={handleLogout} className="text-muted-foreground text-xs">
-          Sign out
-        </Button>
-        <BrokerLoginDialog open={brokerDialogOpen} onOpenChange={setBrokerDialogOpen} onConnected={() => broker.refresh()} />
-      </div>
-    );
-  }
+      );
+    }
 
-  // Broker connected but waiting for first market data tick
-  if (!marketData) {
+    // Feed error
+    if (!marketData && (feedHealth.status === 'error' || feedHealth.status === 'reconnecting')) {
+      return (
+        <div className="h-screen flex flex-col items-center justify-center bg-background gap-4">
+          <div className="text-destructive font-mono text-sm text-center">
+            ⚠ Market Feed Error
+          </div>
+          <p className="text-muted-foreground text-xs text-center max-w-sm">
+            {feedHealth.errorMessage || 'Unable to connect to market data feed.'}
+          </p>
+          <div className="flex gap-3">
+            <Button variant="default" size="sm" onClick={() => { retryFeed(); broker.refresh(); }}>
+              Retry Connection
+            </Button>
+            <Button variant="outline" size="sm" onClick={openBrokerDialog}>
+              Reconnect Broker
+            </Button>
+          </div>
+          <Button variant="ghost" size="sm" onClick={handleLogout} className="text-muted-foreground text-xs">
+            Sign out
+          </Button>
+        </div>
+      );
+    }
+
+    // Waiting for market data
+    if (!marketData) {
+      return (
+        <div className="h-screen flex flex-col items-center justify-center bg-background gap-3">
+          <div className="text-primary terminal-glow font-mono animate-pulse">
+            Connecting to market feed...
+          </div>
+        </div>
+      );
+    }
+
+    // Full dashboard
+    const activeChain = selectedIndex === 'NIFTY' ? marketData.niftyChain : marketData.sensexChain;
+    const activeSpot = selectedIndex === 'NIFTY' ? marketData.niftySpot : marketData.sensexSpot;
+
     return (
-      <div className="h-screen flex flex-col items-center justify-center bg-background gap-3">
-        <div className="text-primary terminal-glow font-mono animate-pulse">
-          Connecting to market feed...
+      <div className="h-screen flex flex-col bg-background overflow-hidden">
+        <header className="border-b border-border px-4 py-2 flex items-center justify-between flex-shrink-0">
+          <div className="flex items-center gap-6">
+            <h1 className="font-mono text-sm font-bold text-primary terminal-glow tracking-wider">
+              OPTIQ<span className="text-muted-foreground">.TRADE</span>
+            </h1>
+            <BrokerStatus isConnected={broker.isConnected} isPaperTrading={isPaperTrading} expiresAt={broker.expiresAt} />
+            <FeedStatus health={feedHealth} />
+            {!broker.isConnected && (
+              <Button variant="terminal" size="sm" onClick={openBrokerDialog} className="text-xs gap-1">
+                <Plug className="w-3 h-3" /> CONNECT BROKER
+              </Button>
+            )}
+            {broker.isConnected && (
+              <Button variant="ghost" size="sm" onClick={async () => { await broker.disconnect(); setIsPaperTrading(true); toast.info('Broker disconnected'); }} className="text-xs text-muted-foreground">
+                DISCONNECT
+              </Button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-4">
+            <SpotTicker label="NIFTY" price={marketData.niftySpot} change={marketData.niftyChange} pcr={marketData.niftyPCR} atm={marketData.niftyATM} />
+            <SpotTicker label="SENSEX" price={marketData.sensexSpot} change={marketData.sensexChange} pcr={marketData.sensexPCR} atm={marketData.sensexATM} />
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className={`text-xs font-mono ${isPaperTrading ? 'text-warning' : 'text-loss'}`}>
+                {isPaperTrading ? '📝 PAPER' : '🔴 LIVE'}
+              </span>
+              <Switch
+                checked={!isPaperTrading}
+                onCheckedChange={(checked) => {
+                  if (checked && !broker.isConnected) {
+                    toast.warning('Connect Kotak Neo broker first');
+                    openBrokerDialog();
+                    return;
+                  }
+                  setIsPaperTrading(!checked);
+                }}
+              />
+            </div>
+            <Button variant="ghost" size="icon" onClick={handleLogout} className="text-muted-foreground">
+              <LogOut className="w-4 h-4" />
+            </Button>
+          </div>
+        </header>
+
+        <div className="px-4 py-2 flex-shrink-0">
+          <RiskControls settings={riskSettings} onUpdate={setRiskSettings} tradesToday={tradesToday} dailyPnL={dailyPnL} riskLimitReached={riskLimitReached} />
+        </div>
+
+        <div className="px-4 pb-2 flex-shrink-0">
+          <AnalyticsPanels chain={activeChain} spotPrice={activeSpot} index={selectedIndex} />
+        </div>
+
+        <div className="flex-1 flex min-h-0 px-4 pb-3 gap-3">
+          <div className="flex-1 flex flex-col min-h-0">
+            <Tabs value={selectedIndex} onValueChange={(v) => setSelectedIndex(v as 'NIFTY' | 'SENSEX')} className="flex flex-col flex-1 min-h-0">
+              <TabsList className="bg-secondary border border-border w-fit self-start mb-2">
+                <TabsTrigger value="NIFTY" className="font-mono text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">NIFTY</TabsTrigger>
+                <TabsTrigger value="SENSEX" className="font-mono text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">SENSEX</TabsTrigger>
+              </TabsList>
+              <TabsContent value="NIFTY" className="flex-1 min-h-0 mt-0">
+                <OptionChainTable chain={marketData.niftyChain} index="NIFTY" />
+              </TabsContent>
+              <TabsContent value="SENSEX" className="flex-1 min-h-0 mt-0">
+                <OptionChainTable chain={marketData.sensexChain} index="SENSEX" />
+              </TabsContent>
+            </Tabs>
+          </div>
+          <div className="w-[300px] flex-shrink-0">
+            <SignalPanel signals={signals} onConfirm={handleConfirmTrade} onDismiss={dismissSignal} riskLimitReached={riskLimitReached} />
+          </div>
+        </div>
+
+        <div className="px-4 pb-3 h-[200px] flex-shrink-0">
+          <PositionsPanel positions={positions} dailyPnL={dailyPnL} tradesToday={tradesToday} onExitPosition={handleExitPosition} tradeHistory={tradeStore.closedTrades} />
         </div>
       </div>
     );
-  }
-
-  const activeChain = selectedIndex === 'NIFTY' ? marketData!.niftyChain : marketData!.sensexChain;
-  const activeSpot = selectedIndex === 'NIFTY' ? marketData!.niftySpot : marketData!.sensexSpot;
+  };
 
   return (
-    <div className="h-screen flex flex-col bg-background overflow-hidden">
-      {/* Top Bar */}
-      <header className="border-b border-border px-4 py-2 flex items-center justify-between flex-shrink-0">
-        <div className="flex items-center gap-6">
-          <h1 className="font-mono text-sm font-bold text-primary terminal-glow tracking-wider">
-            OPTIQ<span className="text-muted-foreground">.TRADE</span>
-          </h1>
-          <BrokerStatus isConnected={broker.isConnected} isPaperTrading={isPaperTrading} expiresAt={broker.expiresAt} />
-          <FeedStatus health={feedHealth} />
-          {!broker.isConnected && (
-            <Button variant="terminal" size="sm" onClick={() => setBrokerDialogOpen(true)} className="text-xs gap-1">
-              <Plug className="w-3 h-3" /> CONNECT BROKER
-            </Button>
-          )}
-          {broker.isConnected && (
-            <Button variant="ghost" size="sm" onClick={async () => { await broker.disconnect(); setIsPaperTrading(true); toast.info('Broker disconnected'); }} className="text-xs text-muted-foreground">
-              DISCONNECT
-            </Button>
-          )}
-        </div>
-
-        <div className="flex items-center gap-4">
-          <SpotTicker label="NIFTY" price={marketData!.niftySpot} change={marketData!.niftyChange} pcr={marketData!.niftyPCR} atm={marketData!.niftyATM} />
-          <SpotTicker label="SENSEX" price={marketData!.sensexSpot} change={marketData!.sensexChange} pcr={marketData!.sensexPCR} atm={marketData!.sensexATM} />
-        </div>
-
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className={`text-xs font-mono ${isPaperTrading ? 'text-warning' : 'text-loss'}`}>
-              {isPaperTrading ? '📝 PAPER' : '🔴 LIVE'}
-            </span>
-            <Switch
-              checked={!isPaperTrading}
-              onCheckedChange={(checked) => {
-                if (checked && !broker.isConnected) {
-                  toast.warning('Connect Kotak Neo broker first');
-                  setBrokerDialogOpen(true);
-                  return;
-                }
-                setIsPaperTrading(!checked);
-              }}
-            />
-          </div>
-          <Button variant="ghost" size="icon" onClick={handleLogout} className="text-muted-foreground">
-            <LogOut className="w-4 h-4" />
-          </Button>
-        </div>
-      </header>
-
-      {/* Risk Controls */}
-      <div className="px-4 py-2 flex-shrink-0">
-        <RiskControls settings={riskSettings} onUpdate={setRiskSettings} tradesToday={tradesToday} dailyPnL={dailyPnL} riskLimitReached={riskLimitReached} />
-      </div>
-
-      {/* Analytics Panels */}
-      <div className="px-4 pb-2 flex-shrink-0">
-        <AnalyticsPanels chain={activeChain} spotPrice={activeSpot} index={selectedIndex} />
-      </div>
-
-      {/* Main Content */}
-      <div className="flex-1 flex min-h-0 px-4 pb-3 gap-3">
-        <div className="flex-1 flex flex-col min-h-0">
-          <Tabs value={selectedIndex} onValueChange={(v) => setSelectedIndex(v as 'NIFTY' | 'SENSEX')} className="flex flex-col flex-1 min-h-0">
-            <TabsList className="bg-secondary border border-border w-fit self-start mb-2">
-              <TabsTrigger value="NIFTY" className="font-mono text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">NIFTY</TabsTrigger>
-              <TabsTrigger value="SENSEX" className="font-mono text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">SENSEX</TabsTrigger>
-            </TabsList>
-            <TabsContent value="NIFTY" className="flex-1 min-h-0 mt-0">
-              <OptionChainTable chain={marketData!.niftyChain} index="NIFTY" />
-            </TabsContent>
-            <TabsContent value="SENSEX" className="flex-1 min-h-0 mt-0">
-              <OptionChainTable chain={marketData!.sensexChain} index="SENSEX" />
-            </TabsContent>
-          </Tabs>
-        </div>
-        <div className="w-[300px] flex-shrink-0">
-          <SignalPanel signals={signals} onConfirm={handleConfirmTrade} onDismiss={dismissSignal} riskLimitReached={riskLimitReached} />
-        </div>
-      </div>
-
-      {/* Bottom */}
-      <div className="px-4 pb-3 h-[200px] flex-shrink-0">
-        <PositionsPanel positions={positions} dailyPnL={dailyPnL} tradesToday={tradesToday} onExitPosition={handleExitPosition} tradeHistory={tradeStore.closedTrades} />
-      </div>
-
-      <BrokerLoginDialog open={brokerDialogOpen} onOpenChange={setBrokerDialogOpen} onConnected={() => broker.refresh()} />
-    </div>
+    <>
+      {renderContent()}
+      <BrokerLoginDialog
+        open={brokerDialogOpen}
+        onOpenChange={setBrokerDialogOpen}
+        onConnected={handleBrokerConnected}
+      />
+    </>
   );
 };
 
