@@ -128,6 +128,36 @@ const Dashboard = () => {
     );
   }
 
+  // Feed error state — show retry UI instead of infinite loading
+  if (!marketData && (feedHealth.status === 'error' || feedHealth.status === 'reconnecting')) {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center bg-background gap-4">
+        <div className="text-destructive font-mono text-sm text-center">
+          ⚠ Market Feed Error
+        </div>
+        <p className="text-muted-foreground text-xs text-center max-w-sm">
+          {feedHealth.errorMessage || 'Unable to connect to market data feed.'}
+        </p>
+        <div className="flex gap-3">
+          <Button variant="default" size="sm" onClick={() => {
+            setFeedHealth(prev => ({ ...prev, status: 'disconnected', errorMessage: null, consecutiveErrors: 0 }));
+            // Re-trigger feed by forcing broker refresh
+            broker.refresh();
+          }}>
+            Retry Connection
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setBrokerDialogOpen(true)}>
+            Reconnect Broker
+          </Button>
+        </div>
+        <Button variant="ghost" size="sm" onClick={handleLogout} className="text-muted-foreground text-xs">
+          Sign out
+        </Button>
+        <BrokerLoginDialog open={brokerDialogOpen} onOpenChange={setBrokerDialogOpen} onConnected={() => broker.refresh()} />
+      </div>
+    );
+  }
+
   // Broker connected but waiting for first market data tick
   if (!marketData) {
     return (
