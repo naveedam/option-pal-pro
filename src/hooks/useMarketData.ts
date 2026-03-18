@@ -336,10 +336,15 @@ export function useMarketData(isPaperTrading: boolean, brokerConnected: boolean 
     setSignals(prev => prev.filter(s => s.id !== signalId));
   }, []);
 
+  const retryFeed = useCallback(() => {
+    setFeedHealth({ status: 'disconnected', latencyMs: 0, lastTickTime: null, errorMessage: null, consecutiveErrors: 0 });
+    if (feedRef.current) { feedRef.current.stop(); feedRef.current.start(); }
+  }, []);
+
   return {
     marketData, signals, positions, tradesToday, dailyPnL,
     riskSettings, setRiskSettings, riskLimitReached,
     executePaperTrade, validateRiskLimits, addLivePosition,
-    exitPosition, dismissSignal, feedHealth,
+    exitPosition, dismissSignal, feedHealth, retryFeed,
   };
 }

@@ -30,7 +30,7 @@ const Dashboard = () => {
     marketData, signals, positions, tradesToday, dailyPnL,
     riskSettings, setRiskSettings, riskLimitReached,
     executePaperTrade, validateRiskLimits, addLivePosition,
-    exitPosition, dismissSignal, feedHealth,
+    exitPosition, dismissSignal, feedHealth, retryFeed,
   } = useMarketData(isPaperTrading, broker.isConnected);
 
   const handleConfirmTrade = async (signal: typeof signals[0]) => {
