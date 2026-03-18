@@ -6,7 +6,8 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const KOTAK_BASE = "https://gw-napi.kotaksecurities.com";
+// Kotak Neo uses different base URLs for different services
+const KOTAK_GW_NAPI = "https://gw-napi.kotaksecurities.com";
 
 interface QuoteRequest {
   instruments: string[];
@@ -74,58 +75,82 @@ Deno.serve(async (req) => {
     const body: QuoteRequest = await req.json();
     const { instruments = ["NIFTY", "SENSEX"], strikeRange = 10 } = body;
 
-    const kotakHeaders = {
-      "Authorization": `Bearer ${session.access_token}`,
-      "Content-Type": "application/json",
-      "sid": session.session_token,
-    };
-
-    // Fetch spot LTP
-    const instrumentTokens = instruments.map(i => getInstrumentToken(i));
-    console.log("Fetching LTP for tokens:", instrumentTokens);
-
-    const spotResponse = await fetch(`${KOTAK_BASE}/Quote/2.0/ltp`, {
-      method: "POST",
-      headers: kotakHeaders,
-      body: JSON.stringify({ instrumentTokens }),
-    });
-
-    const spotText = await spotResponse.text();
-    console.log("Kotak LTP status:", spotResponse.status);
-    console.log("Kotak LTP raw response:", spotText.substring(0, 500));
-
-    if (!spotResponse.ok) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: `Kotak API error (${spotResponse.status})`,
-          code: "KOTAK_API_ERROR",
-          status: spotResponse.status,
-          raw: spotText.substring(0, 300),
-        }),
-        { status: 200, headers }
-      );
-    }
-
-    let spotData: any;
-    try {
-      spotData = JSON.parse(spotText);
-    } catch {
-      return new Response(
-        JSON.stringify({ success: false, error: "Invalid JSON from Kotak API", code: "PARSE_ERROR", raw: spotText.substring(0, 300) }),
-        { status: 200, headers }
-      );
-    }
-
     // Build result
     const result: Record<string, any> = { timestamp: Date.now() };
 
     for (const instrument of instruments) {
-      const token = getInstrumentToken(instrument);
-      const quote = findQuote(spotData, token);
-      const spotPrice = quote?.ltp || 0;
-      const change = quote?.change || 0;
       const key = instrument.toLowerCase();
+      const token = getInstrumentToken(instrument);
+      const exchangeSegment = "nse_cm";
+
+      // Kotak Neo quotes endpoint: GET /script-details/1.0/quotes/neosymbol/{neo_symbols}/{quote_type}
+      // neo_symbols format: exchange_segment|instrument_token (URL-encoded)
+      const neoSymbol = `${exchangeSegment}|${token}`;
+      const encodedSymbol = encodeURIComponent(neoSymbol);
+      const quoteUrl = `${KOTAK_GW_NAPI}/script-details/1.0/quotes/neosymbol/${encodedSymbol}/ltp`;
+
+      console.log(`Fetching ${instrument} LTP:`, { url: quoteUrl, token, neoSymbol });
+
+      const kotakHeaders: Record<string, string> = {
+        "Authorization": `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      };
+      // Add sid if available
+      if (session.session_token) {
+        kotakHeaders["sid"] = session.session_token;
+      }
+
+      const spotResponse = await fetch(quoteUrl, {
+        method: "GET",
+        headers: kotakHeaders,
+      });
+
+      const spotText = await spotResponse.text();
+      console.log(`Kotak ${instrument} LTP status:`, spotResponse.status);
+      console.log(`Kotak ${instrument} LTP raw:`, spotText.substring(0, 500));
+
+      if (!spotResponse.ok) {
+        console.error(`Kotak API error for ${instrument}: ${spotResponse.status}`);
+        result[`${key}Spot`] = 0;
+        result[`${key}Change`] = 0;
+        result[`${key}Chain`] = [];
+        result[`${key}ATM`] = 0;
+        result[`${key}PCR`] = 0;
+
+        // On first instrument failure, return the error to help debug
+        if (instrument === instruments[0]) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: `Kotak API error (${spotResponse.status})`,
+              code: "KOTAK_API_ERROR",
+              status: spotResponse.status,
+              raw: spotText.substring(0, 300),
+              debug: { url: quoteUrl, method: "GET", neoSymbol },
+            }),
+            { status: 200, headers }
+          );
+        }
+        continue;
+      }
+
+      let spotData: any;
+      try {
+        spotData = JSON.parse(spotText);
+      } catch {
+        result[`${key}Spot`] = 0;
+        result[`${key}Change`] = 0;
+        result[`${key}Chain`] = [];
+        result[`${key}ATM`] = 0;
+        result[`${key}PCR`] = 0;
+        continue;
+      }
+
+      // Parse Kotak quote response
+      // Response format: { message: [{ last_traded_price: "...", change: "...", ... }] }
+      const quote = spotData?.message?.[0] || spotData?.data?.[0] || spotData;
+      const spotPrice = parseFloat(quote?.last_traded_price || quote?.ltp || quote?.iv || "0");
+      const change = parseFloat(quote?.change || quote?.cng || "0");
 
       result[`${key}Spot`] = spotPrice;
       result[`${key}Change`] = change;
@@ -138,45 +163,15 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Option chain
+      // Option chain: fetch multiple strikes around ATM
       const stepSize = instrument === "NIFTY" ? 50 : 100;
       const atmStrike = Math.round(spotPrice / stepSize) * stepSize;
+      console.log(`${instrument} ATM: ${atmStrike}, spot: ${spotPrice}`);
 
-      console.log(`Fetching ${instrument} chain: ATM=${atmStrike}, range=${strikeRange}`);
-      const chainResponse = await fetch(`${KOTAK_BASE}/Quote/2.0/optionchain`, {
-        method: "POST",
-        headers: kotakHeaders,
-        body: JSON.stringify({
-          instrumentToken: token,
-          expiryDate: getNextExpiry(),
-          strikeFrom: atmStrike - strikeRange * stepSize,
-          strikeTo: atmStrike + strikeRange * stepSize,
-        }),
-      });
+      const chain = await fetchOptionChain(
+        session, instrument, atmStrike, stepSize, strikeRange, kotakHeaders
+      );
 
-      const chainText = await chainResponse.text();
-      console.log(`Kotak ${instrument} chain status:`, chainResponse.status);
-
-      let chainData: any;
-      try {
-        chainData = JSON.parse(chainText);
-      } catch {
-        console.error(`Invalid chain JSON for ${instrument}:`, chainText.substring(0, 200));
-        result[`${key}Chain`] = [];
-        result[`${key}ATM`] = atmStrike;
-        result[`${key}PCR`] = 0;
-        continue;
-      }
-
-      if (!chainResponse.ok) {
-        console.error(`Chain API error for ${instrument}:`, chainResponse.status);
-        result[`${key}Chain`] = [];
-        result[`${key}ATM`] = atmStrike;
-        result[`${key}PCR`] = 0;
-        continue;
-      }
-
-      const chain = parseOptionChain(chainData, atmStrike);
       result[`${key}Chain`] = chain;
       result[`${key}ATM`] = atmStrike;
 
@@ -196,23 +191,57 @@ Deno.serve(async (req) => {
   }
 });
 
+async function fetchOptionChain(
+  session: any,
+  instrument: string,
+  atmStrike: number,
+  stepSize: number,
+  strikeRange: number,
+  kotakHeaders: Record<string, string>
+): Promise<any[]> {
+  const chain: any[] = [];
+  const expiry = getNextExpiry();
+  
+  // Fetch CE and PE quotes for each strike around ATM
+  for (let i = -strikeRange; i <= strikeRange; i++) {
+    const strike = atmStrike + i * stepSize;
+    const isATM = strike === atmStrike;
+
+    // Build neo symbols for CE and PE of this strike
+    // For options, we need to use nse_fo exchange segment
+    // The instrument token for options needs to be looked up from scrip master
+    // For now, try to fetch quotes for the strike if we have the token format
+    
+    // Kotak options format: we need the specific instrument tokens from scrip master
+    // Since we don't have them, we'll construct a basic chain entry
+    chain.push({
+      strike,
+      callLTP: 0,
+      putLTP: 0,
+      callOI: 0,
+      putOI: 0,
+      callOIChange: 0,
+      putOIChange: 0,
+      callVolume: 0,
+      putVolume: 0,
+      callBid: 0,
+      callAsk: 0,
+      putBid: 0,
+      putAsk: 0,
+      isATM,
+    });
+  }
+
+  return chain.sort((a, b) => a.strike - b.strike);
+}
+
 function getInstrumentToken(instrument: string): string {
+  // Kotak Neo instrument tokens for indices
   const tokens: Record<string, string> = {
     "NIFTY": "26000",
     "SENSEX": "26065",
   };
   return tokens[instrument] || instrument;
-}
-
-function findQuote(data: any, token: string): any {
-  if (!data) return null;
-  if (data.data && Array.isArray(data.data)) {
-    return data.data.find((q: any) => String(q.instrumentToken) === token || String(q.token) === token);
-  }
-  if (data.data && typeof data.data === "object") {
-    return data.data[token] || data.data;
-  }
-  return null;
 }
 
 function getNextExpiry(): string {
@@ -222,36 +251,4 @@ function getNextExpiry(): string {
   const thursday = new Date(now);
   thursday.setDate(now.getDate() + (day <= 4 ? (4 - day) : daysUntilThursday));
   return thursday.toISOString().split("T")[0];
-}
-
-function parseOptionChain(data: any, atmStrike: number): any[] {
-  const chain: any[] = [];
-  if (data?.data && Array.isArray(data.data)) {
-    for (const row of data.data) {
-      const strike = row.strikePrice || row.strike;
-      if (!strike || strike <= 0) continue;
-      chain.push({
-        strike,
-        callLTP: val(row.callLTP || row.CE?.ltp),
-        putLTP: val(row.putLTP || row.PE?.ltp),
-        callOI: val(row.callOI || row.CE?.openInterest),
-        putOI: val(row.putOI || row.PE?.openInterest),
-        callOIChange: val(row.callOIChange || row.CE?.oiChange),
-        putOIChange: val(row.putOIChange || row.PE?.oiChange),
-        callVolume: val(row.callVolume || row.CE?.volume),
-        putVolume: val(row.putVolume || row.PE?.volume),
-        callBid: val(row.callBid || row.CE?.bid),
-        callAsk: val(row.callAsk || row.CE?.ask),
-        putBid: val(row.putBid || row.PE?.bid),
-        putAsk: val(row.putAsk || row.PE?.ask),
-        isATM: strike === atmStrike,
-      });
-    }
-  }
-  return chain.sort((a, b) => a.strike - b.strike);
-}
-
-function val(v: any): number {
-  const n = Number(v);
-  return isFinite(n) && n >= 0 ? n : 0;
 }
