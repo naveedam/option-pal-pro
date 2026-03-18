@@ -140,8 +140,7 @@ const Dashboard = () => {
         </p>
         <div className="flex gap-3">
           <Button variant="default" size="sm" onClick={() => {
-            setFeedHealth(prev => ({ ...prev, status: 'disconnected', errorMessage: null, consecutiveErrors: 0 }));
-            // Re-trigger feed by forcing broker refresh
+            retryFeed();
             broker.refresh();
           }}>
             Retry Connection
