@@ -6,18 +6,20 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+const KOTAK_BASE = "https://gw-napi.kotaksecurities.com";
+const KOTAK_SESSION_BASE = "https://napi.kotaksecurities.com";
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const headers = { ...corsHeaders, "Content-Type": "application/json" };
+
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers });
     }
 
     const supabase = createClient(
@@ -26,16 +28,9 @@ Deno.serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } }
     );
 
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers });
     }
 
     const userId = user.id;
@@ -53,23 +48,117 @@ Deno.serve(async (req) => {
         if (!consumerKey || !neoUserId || !password || !otp) {
           return new Response(
             JSON.stringify({ error: "All credential fields are required" }),
-            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            { status: 400, headers }
           );
         }
 
-        // In production, call Kotak Neo login API:
-        // POST https://gw-napi.kotaksecurities.com/login/1.0/login/v2/validate
-        // with { userid, password, otp } + consumer key auth header
-        // For now, simulate successful session generation
-        const accessToken = `neo_${crypto.randomUUID().replace(/-/g, "")}`;
-        const sessionId = crypto.randomUUID();
+        // Step 1: Call Kotak Neo TOTP login endpoint
+        console.log("Calling Kotak Neo login API...");
+        const loginUrl = `${KOTAK_BASE}/login/1.0/tradeApiLogin`;
+        const loginResponse = await fetch(loginUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${consumerKey}`,
+          },
+          body: JSON.stringify({
+            userId: neoUserId,
+            password: password,
+            otp: otp,
+          }),
+        });
+
+        const loginText = await loginResponse.text();
+        console.log("Kotak login status:", loginResponse.status);
+        console.log("Kotak login response:", loginText.substring(0, 500));
+
+        let loginData: any;
+        try {
+          loginData = JSON.parse(loginText);
+        } catch {
+          return new Response(
+            JSON.stringify({ error: "Invalid response from Kotak Neo login", raw: loginText.substring(0, 200) }),
+            { status: 502, headers }
+          );
+        }
+
+        // Check for login errors
+        if (!loginResponse.ok || loginData?.error || loginData?.stat === "Not_Ok") {
+          const errorMsg = loginData?.error || loginData?.emsg || loginData?.message || "Login failed";
+          console.error("Kotak login failed:", errorMsg);
+          return new Response(
+            JSON.stringify({ error: `Kotak Neo login failed: ${errorMsg}` }),
+            { status: 400, headers }
+          );
+        }
+
+        // Step 2: Validate with OTP / 2FA
+        // The tradeApiLogin may return tokens directly, or we may need a second call
+        let accessToken = loginData?.token || loginData?.access_token || loginData?.data?.token;
+        let sessionId = loginData?.sid || loginData?.data?.sid || loginData?.session_id;
+        const serverId = loginData?.serverId || loginData?.data?.serverId || loginData?.hsServerId;
+
+        // If tradeApiLogin doesn't work, try the validate endpoint
+        if (!accessToken) {
+          console.log("Trying validate endpoint...");
+          const validateUrl = `${KOTAK_BASE}/login/1.0/tradeApiValidate`;
+          const validateResponse = await fetch(validateUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${consumerKey}`,
+            },
+            body: JSON.stringify({
+              userId: neoUserId,
+              otp: otp,
+            }),
+          });
+
+          const validateText = await validateResponse.text();
+          console.log("Kotak validate status:", validateResponse.status);
+          console.log("Kotak validate response:", validateText.substring(0, 500));
+
+          let validateData: any;
+          try {
+            validateData = JSON.parse(validateText);
+          } catch {
+            return new Response(
+              JSON.stringify({ error: "Invalid response from Kotak Neo validate", raw: validateText.substring(0, 200) }),
+              { status: 502, headers }
+            );
+          }
+
+          if (!validateResponse.ok || validateData?.error || validateData?.stat === "Not_Ok") {
+            const errorMsg = validateData?.error || validateData?.emsg || validateData?.message || "Validation failed";
+            return new Response(
+              JSON.stringify({ error: `Kotak Neo validation failed: ${errorMsg}` }),
+              { status: 400, headers }
+            );
+          }
+
+          accessToken = validateData?.token || validateData?.access_token || validateData?.data?.token;
+          sessionId = validateData?.sid || validateData?.data?.sid || validateData?.session_id;
+        }
+
+        if (!accessToken) {
+          console.error("No access token in Kotak response:", JSON.stringify(loginData).substring(0, 300));
+          return new Response(
+            JSON.stringify({ 
+              error: "Could not extract access token from Kotak Neo response",
+              debug: { keys: Object.keys(loginData), status: loginResponse.status }
+            }),
+            { status: 400, headers }
+          );
+        }
+
         const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000); // 8 hours
 
+        // Store the REAL token from Kotak
         await adminClient.from("broker_sessions").upsert(
           {
             user_id: userId,
             broker: "kotak_neo",
-            session_token: sessionId,
+            session_token: sessionId || crypto.randomUUID(),
             access_token: accessToken,
             is_active: true,
             connected_at: new Date().toISOString(),
@@ -79,13 +168,15 @@ Deno.serve(async (req) => {
           { onConflict: "user_id,broker" }
         );
 
+        console.log("Broker session stored successfully");
+
         return new Response(
           JSON.stringify({
             success: true,
             message: "Broker connected successfully",
             expiresAt: expiresAt.toISOString(),
           }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          { headers }
         );
       }
 
@@ -106,7 +197,7 @@ Deno.serve(async (req) => {
             connectedAt: session?.connected_at,
             expiresAt: session?.expires_at,
           }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          { headers }
         );
       }
 
@@ -124,20 +215,21 @@ Deno.serve(async (req) => {
 
         return new Response(
           JSON.stringify({ success: true, message: "Disconnected" }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          { headers }
         );
       }
 
       default:
         return new Response(
           JSON.stringify({ error: "Invalid action" }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          { status: 400, headers }
         );
     }
   } catch (error) {
+    console.error("Auth error:", error);
     return new Response(
       JSON.stringify({ error: error.message || "Internal server error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      { status: 500, headers }
     );
   }
 });
