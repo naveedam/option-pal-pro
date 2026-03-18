@@ -242,6 +242,21 @@ export function useMarketData(isPaperTrading: boolean, brokerConnected: boolean 
     );
   }, [riskLimitReached]);
 
+  // Timeout fallback: if no data after 8s, show error
+  useEffect(() => {
+    if (marketData || !brokerConnected) return;
+    const timeout = setTimeout(() => {
+      if (!marketData) {
+        setFeedHealth(prev => ({
+          ...prev,
+          status: 'error',
+          errorMessage: feedHealth.errorMessage || 'Market data timeout — broker API may be unavailable',
+        }));
+      }
+    }, 8000);
+    return () => clearTimeout(timeout);
+  }, [marketData, brokerConnected]);
+
   useEffect(() => {
     // Only start the market feed when broker is connected
     if (!brokerConnected) {
@@ -321,10 +336,15 @@ export function useMarketData(isPaperTrading: boolean, brokerConnected: boolean 
     setSignals(prev => prev.filter(s => s.id !== signalId));
   }, []);
 
+  const retryFeed = useCallback(() => {
+    setFeedHealth({ status: 'disconnected', latencyMs: 0, lastTickTime: null, errorMessage: null, consecutiveErrors: 0 });
+    if (feedRef.current) { feedRef.current.stop(); feedRef.current.start(); }
+  }, []);
+
   return {
     marketData, signals, positions, tradesToday, dailyPnL,
     riskSettings, setRiskSettings, riskLimitReached,
     executePaperTrade, validateRiskLimits, addLivePosition,
-    exitPosition, dismissSignal, feedHealth,
+    exitPosition, dismissSignal, feedHealth, retryFeed,
   };
 }
