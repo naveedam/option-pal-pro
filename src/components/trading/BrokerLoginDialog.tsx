@@ -25,21 +25,23 @@ export function BrokerLoginDialog({ open, onOpenChange, onConnected }: BrokerLog
   const [success, setSuccess] = useState(false);
 
   const [consumerKey, setConsumerKey] = useState('');
-  const [neoUserId, setNeoUserId] = useState('');
-  const [password, setPassword] = useState('');
-  const [otp, setOtp] = useState('');
+  const [mobileNumber, setMobileNumber] = useState('');
+  const [ucc, setUcc] = useState('');
+  const [totp, setTotp] = useState('');
+  const [mpin, setMpin] = useState('');
 
   const resetForm = () => {
     setError('');
     setSuccess(false);
     setConsumerKey('');
-    setNeoUserId('');
-    setPassword('');
-    setOtp('');
+    setMobileNumber('');
+    setUcc('');
+    setTotp('');
+    setMpin('');
   };
 
   const handleLogin = async () => {
-    if (!consumerKey || !neoUserId || !password || !otp) {
+    if (!consumerKey || !mobileNumber || !ucc || !totp || !mpin) {
       setError('All fields are required');
       return;
     }
@@ -52,32 +54,28 @@ export function BrokerLoginDialog({ open, onOpenChange, onConnected }: BrokerLog
         body: {
           action: 'login',
           consumerKey,
-          userId: neoUserId,
-          password,
-          otp,
+          mobileNumber,
+          ucc,
+          totp,
+          mpin,
         },
       });
 
       if (fnError) throw new Error(fnError.message);
-      if (!data?.success) throw new Error(data?.error || 'Login failed');
+      if (!data?.success) {
+        setError(data?.error || 'Login failed');
+        return;
+      }
 
       setSuccess(true);
       toast.success('Kotak Neo connected successfully');
       onConnected();
 
-      // Auto-close after brief success display
       setTimeout(() => {
         onOpenChange(false);
       }, 1500);
     } catch (err: any) {
-      const msg = err.message || 'Connection failed';
-      if (msg.toLowerCase().includes('otp')) {
-        setError('Invalid OTP. Please check and try again.');
-      } else if (msg.toLowerCase().includes('credential') || msg.toLowerCase().includes('password')) {
-        setError('Invalid credentials. Please verify your User ID and password.');
-      } else {
-        setError(msg);
-      }
+      setError(err.message || 'Connection failed');
     } finally {
       setLoading(false);
     }
@@ -107,7 +105,7 @@ export function BrokerLoginDialog({ open, onOpenChange, onConnected }: BrokerLog
         {error && (
           <div className="flex items-center gap-2 text-loss text-xs bg-loss/10 border border-loss/20 rounded-md px-3 py-2">
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
-            {error}
+            <span className="break-all">{error}</span>
           </div>
         )}
 
@@ -120,54 +118,68 @@ export function BrokerLoginDialog({ open, onOpenChange, onConnected }: BrokerLog
             </p>
           </div>
         ) : (
-          <div className="space-y-4">
-            <div className="space-y-2">
+          <div className="space-y-3">
+            <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground">CONSUMER KEY</Label>
               <Input
                 value={consumerKey}
                 onChange={(e) => setConsumerKey(e.target.value)}
-                placeholder="Enter Kotak Neo Consumer Key"
+                placeholder="From Trade API dashboard"
                 className="bg-secondary border-border font-mono text-xs"
                 disabled={loading}
               />
             </div>
-            <div className="space-y-2">
-              <Label className="text-xs text-muted-foreground">USER ID</Label>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">MOBILE NUMBER</Label>
               <Input
-                value={neoUserId}
-                onChange={(e) => setNeoUserId(e.target.value)}
-                placeholder="Enter Kotak Neo User ID"
+                value={mobileNumber}
+                onChange={(e) => setMobileNumber(e.target.value)}
+                placeholder="Registered mobile (e.g. +919999999999)"
                 className="bg-secondary border-border font-mono text-xs"
                 disabled={loading}
               />
             </div>
-            <div className="space-y-2">
-              <Label className="text-xs text-muted-foreground">PASSWORD</Label>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">UCC (UNIQUE CLIENT CODE)</Label>
               <Input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter Kotak Neo password"
+                value={ucc}
+                onChange={(e) => setUcc(e.target.value.toUpperCase())}
+                placeholder="Your client code (e.g. ABC12)"
                 className="bg-secondary border-border font-mono text-xs"
                 disabled={loading}
               />
             </div>
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">OTP</Label>
-              <Input
-                type="text"
-                inputMode="numeric"
-                maxLength={6}
-                value={otp}
-                onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
-                placeholder="Enter OTP from authenticator"
-                className="bg-secondary border-border font-mono text-xs"
-                disabled={loading}
-              />
-              <p className="text-[10px] text-muted-foreground">
-                Enter the OTP from your Kotak Neo authenticator or SMS.
-              </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">TOTP</Label>
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={totp}
+                  onChange={(e) => setTotp(e.target.value.replace(/\D/g, ''))}
+                  placeholder="6-digit TOTP"
+                  className="bg-secondary border-border font-mono text-xs"
+                  disabled={loading}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">MPIN</Label>
+                <Input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={mpin}
+                  onChange={(e) => setMpin(e.target.value.replace(/\D/g, ''))}
+                  placeholder="6-digit MPIN"
+                  className="bg-secondary border-border font-mono text-xs"
+                  disabled={loading}
+                />
+              </div>
             </div>
+            <p className="text-[10px] text-muted-foreground">
+              TOTP from your authenticator app. MPIN is your 6-digit trading PIN.
+            </p>
             <Button
               onClick={handleLogin}
               disabled={loading}
