@@ -55,17 +55,19 @@ Deno.serve(async (req) => {
         // Step 1: Call Kotak Neo TOTP login endpoint
         console.log("Calling Kotak Neo login API...");
         const loginUrl = `${KOTAK_BASE}/login/1.0/tradeApiLogin`;
+        const loginBody = {
+          userId: neoUserId,
+          password: password,
+          totp: otp,
+        };
+        console.log("Kotak login request:", { url: loginUrl, body: { ...loginBody, password: "***" } });
         const loginResponse = await fetch(loginUrl, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${consumerKey}`,
+            "Authorization": consumerKey,
           },
-          body: JSON.stringify({
-            userId: neoUserId,
-            password: password,
-            otp: otp,
-          }),
+          body: JSON.stringify(loginBody),
         });
 
         const loginText = await loginResponse.text();
@@ -106,11 +108,11 @@ Deno.serve(async (req) => {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "Authorization": `Bearer ${consumerKey}`,
+              "Authorization": consumerKey,
             },
             body: JSON.stringify({
               userId: neoUserId,
-              otp: otp,
+              totp: otp,
             }),
           });
 
