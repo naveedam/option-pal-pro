@@ -6,8 +6,12 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const KOTAK_BASE = "https://gw-napi.kotaksecurities.com";
-const KOTAK_SESSION_BASE = "https://napi.kotaksecurities.com";
+// Kotak Neo SDK v2 base URLs
+const KOTAK_GW_NAPI = "https://gw-napi.kotaksecurities.com";
+
+// SDK v2 PROD endpoints (from settings.py)
+const TOTP_LOGIN_PATH = "login/1.0/login/v6/totp/login";
+const TOTP_VALIDATE_PATH = "login/1.0/login/v6/totp/validate";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -43,24 +47,26 @@ Deno.serve(async (req) => {
 
     switch (action) {
       case "login": {
-        const { consumerKey, userId: neoUserId, password, otp } = payload;
+        const { consumerKey, mobileNumber, ucc, totp, mpin } = payload;
 
-        if (!consumerKey || !neoUserId || !password || !otp) {
+        if (!consumerKey || !mobileNumber || !ucc || !totp || !mpin) {
           return new Response(
-            JSON.stringify({ error: "All credential fields are required" }),
-            { status: 400, headers }
+            JSON.stringify({ success: false, error: "All fields are required: Consumer Key, Mobile Number, UCC, TOTP, and MPIN" }),
+            { status: 200, headers }
           );
         }
 
-        // Step 1: Call Kotak Neo TOTP login endpoint
-        console.log("Calling Kotak Neo login API...");
-        const loginUrl = `${KOTAK_BASE}/login/1.0/tradeApiLogin`;
+        // === Step 1: TOTP Login (generates view token + sid) ===
+        const loginUrl = `${KOTAK_GW_NAPI}/${TOTP_LOGIN_PATH}`;
         const loginBody = {
-          userId: neoUserId,
-          password: password,
-          totp: otp,
+          mobileNumber: mobileNumber,
+          ucc: ucc,
+          totp: totp,
         };
-        console.log("Kotak login request:", { url: loginUrl, body: { ...loginBody, password: "***" } });
+
+        console.log("Step 1: TOTP Login...");
+        console.log("Request:", { url: loginUrl, body: { ...loginBody, totp: "***" } });
+
         const loginResponse = await fetch(loginUrl, {
           method: "POST",
           headers: {
@@ -71,97 +77,107 @@ Deno.serve(async (req) => {
         });
 
         const loginText = await loginResponse.text();
-        console.log("Kotak login status:", loginResponse.status);
-        console.log("Kotak login response:", loginText.substring(0, 500));
+        console.log("TOTP Login status:", loginResponse.status);
+        console.log("TOTP Login response:", loginText.substring(0, 500));
 
         let loginData: any;
         try {
           loginData = JSON.parse(loginText);
         } catch {
           return new Response(
-            JSON.stringify({ error: "Invalid response from Kotak Neo login", raw: loginText.substring(0, 200) }),
-            { status: 502, headers }
+            JSON.stringify({ success: false, error: "Invalid JSON from Kotak TOTP login", raw: loginText.substring(0, 300) }),
+            { status: 200, headers }
           );
         }
 
-        // Check for login errors
-        if (!loginResponse.ok || loginData?.error || loginData?.stat === "Not_Ok") {
-          const errorMsg = loginData?.error || loginData?.emsg || loginData?.message || "Login failed";
-          console.error("Kotak login failed:", errorMsg);
+        if (!loginResponse.ok || loginData?.stat === "Not_Ok" || loginData?.error) {
+          const errorMsg = loginData?.emsg || loginData?.message || loginData?.error || loginData?.description || "TOTP login failed";
+          console.error("TOTP Login failed:", errorMsg);
           return new Response(
-            JSON.stringify({ error: `Kotak Neo login failed: ${errorMsg}` }),
-            { status: 400, headers }
+            JSON.stringify({ success: false, error: `TOTP Login failed: ${errorMsg}`, status: loginResponse.status }),
+            { status: 200, headers }
           );
         }
 
-        // Step 2: Validate with OTP / 2FA
-        // The tradeApiLogin may return tokens directly, or we may need a second call
-        let accessToken = loginData?.token || loginData?.access_token || loginData?.data?.token;
-        let sessionId = loginData?.sid || loginData?.data?.sid || loginData?.session_id;
-        const serverId = loginData?.serverId || loginData?.data?.serverId || loginData?.hsServerId;
+        // Extract view token and sid from step 1
+        const viewToken = loginData?.data?.token || loginData?.token;
+        const viewSid = loginData?.data?.sid || loginData?.sid;
+        const serverId = loginData?.data?.hsServerId || loginData?.hsServerId;
 
-        // If tradeApiLogin doesn't work, try the validate endpoint
-        if (!accessToken) {
-          console.log("Trying validate endpoint...");
-          const validateUrl = `${KOTAK_BASE}/login/1.0/tradeApiValidate`;
-          const validateResponse = await fetch(validateUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": consumerKey,
-            },
-            body: JSON.stringify({
-              userId: neoUserId,
-              totp: otp,
-            }),
-          });
-
-          const validateText = await validateResponse.text();
-          console.log("Kotak validate status:", validateResponse.status);
-          console.log("Kotak validate response:", validateText.substring(0, 500));
-
-          let validateData: any;
-          try {
-            validateData = JSON.parse(validateText);
-          } catch {
-            return new Response(
-              JSON.stringify({ error: "Invalid response from Kotak Neo validate", raw: validateText.substring(0, 200) }),
-              { status: 502, headers }
-            );
-          }
-
-          if (!validateResponse.ok || validateData?.error || validateData?.stat === "Not_Ok") {
-            const errorMsg = validateData?.error || validateData?.emsg || validateData?.message || "Validation failed";
-            return new Response(
-              JSON.stringify({ error: `Kotak Neo validation failed: ${errorMsg}` }),
-              { status: 400, headers }
-            );
-          }
-
-          accessToken = validateData?.token || validateData?.access_token || validateData?.data?.token;
-          sessionId = validateData?.sid || validateData?.data?.sid || validateData?.session_id;
-        }
-
-        if (!accessToken) {
-          console.error("No access token in Kotak response:", JSON.stringify(loginData).substring(0, 300));
+        if (!viewToken) {
+          console.error("No view token in response:", JSON.stringify(loginData).substring(0, 300));
           return new Response(
-            JSON.stringify({ 
-              error: "Could not extract access token from Kotak Neo response",
-              debug: { keys: Object.keys(loginData), status: loginResponse.status }
-            }),
-            { status: 400, headers }
+            JSON.stringify({ success: false, error: "No view token received from TOTP login", keys: Object.keys(loginData) }),
+            { status: 200, headers }
           );
         }
 
-        const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000); // 8 hours
+        console.log("Step 1 success: got view token and sid");
 
-        // Store the REAL token from Kotak
+        // === Step 2: TOTP Validate with MPIN (generates trade token) ===
+        const validateUrl = `${KOTAK_GW_NAPI}/${TOTP_VALIDATE_PATH}`;
+        const validateBody = {
+          mpin: mpin,
+        };
+
+        console.log("Step 2: TOTP Validate with MPIN...");
+        console.log("Request:", { url: validateUrl });
+
+        const validateResponse = await fetch(validateUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${viewToken}`,
+            "sid": viewSid || "",
+          },
+          body: JSON.stringify(validateBody),
+        });
+
+        const validateText = await validateResponse.text();
+        console.log("TOTP Validate status:", validateResponse.status);
+        console.log("TOTP Validate response:", validateText.substring(0, 500));
+
+        let validateData: any;
+        try {
+          validateData = JSON.parse(validateText);
+        } catch {
+          return new Response(
+            JSON.stringify({ success: false, error: "Invalid JSON from Kotak TOTP validate", raw: validateText.substring(0, 300) }),
+            { status: 200, headers }
+          );
+        }
+
+        if (!validateResponse.ok || validateData?.stat === "Not_Ok" || validateData?.error) {
+          const errorMsg = validateData?.emsg || validateData?.message || validateData?.error || validateData?.description || "MPIN validation failed";
+          console.error("TOTP Validate failed:", errorMsg);
+          return new Response(
+            JSON.stringify({ success: false, error: `MPIN Validation failed: ${errorMsg}`, status: validateResponse.status }),
+            { status: 200, headers }
+          );
+        }
+
+        // Extract trade token from step 2
+        const tradeToken = validateData?.data?.token || validateData?.token || viewToken;
+        const tradeSid = validateData?.data?.sid || validateData?.sid || viewSid;
+
+        if (!tradeToken) {
+          return new Response(
+            JSON.stringify({ success: false, error: "No trade token received from MPIN validation" }),
+            { status: 200, headers }
+          );
+        }
+
+        console.log("Step 2 success: got trade token");
+
+        const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);
+
+        // Store session
         await adminClient.from("broker_sessions").upsert(
           {
             user_id: userId,
             broker: "kotak_neo",
-            session_token: sessionId || crypto.randomUUID(),
-            access_token: accessToken,
+            session_token: tradeSid || crypto.randomUUID(),
+            access_token: tradeToken,
             is_active: true,
             connected_at: new Date().toISOString(),
             expires_at: expiresAt.toISOString(),
@@ -230,8 +246,8 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error("Auth error:", error);
     return new Response(
-      JSON.stringify({ error: error.message || "Internal server error" }),
-      { status: 500, headers }
+      JSON.stringify({ success: false, error: error.message || "Internal server error" }),
+      { status: 200, headers }
     );
   }
 });
