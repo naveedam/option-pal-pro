@@ -108,11 +108,11 @@ Deno.serve(async (req) => {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "Authorization": `Bearer ${consumerKey}`,
+              "Authorization": consumerKey,
             },
             body: JSON.stringify({
               userId: neoUserId,
-              otp: otp,
+              totp: otp,
             }),
           });
 
