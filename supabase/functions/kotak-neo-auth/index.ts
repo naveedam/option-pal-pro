@@ -106,7 +106,7 @@ Deno.serve(async (req) => {
         }
 
         // === Step 1: TOTP Login (generates view token + sid) ===
-        const loginUrl = `${KOTAK_GW_NAPI}/${TOTP_LOGIN_PATH}`;
+        const loginUrl = `${KOTAK_BASE}/${TOTP_LOGIN_PATH}`;
         const loginBody = {
           mobileNumber: mobileNumber,
           ucc: ucc,
@@ -121,6 +121,7 @@ Deno.serve(async (req) => {
           headers: {
             "Content-Type": "application/json",
             "Authorization": consumerKey,
+            "neo-fin-key": "neotradeapi",
           },
           body: JSON.stringify(loginBody),
         });
