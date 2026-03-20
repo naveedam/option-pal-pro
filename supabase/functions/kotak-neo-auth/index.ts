@@ -6,12 +6,12 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// Kotak Neo SDK v2 base URLs
-const KOTAK_GW_NAPI = "https://gw-napi.kotaksecurities.com";
+// Kotak Neo SDK v2 base URL (mis domain for session init)
+const KOTAK_BASE = "https://mis.kotaksecurities.com";
 
-// SDK v2 PROD endpoints (from settings.py)
-const TOTP_LOGIN_PATH = "login/1.0/login/v6/totp/login";
-const TOTP_VALIDATE_PATH = "login/1.0/login/v6/totp/validate";
+// SDK v2 PROD endpoints (from totp_api.py / urls.py)
+const TOTP_LOGIN_PATH = "login/1.0/tradeApiLogin";
+const TOTP_VALIDATE_PATH = "login/1.0/tradeApiValidate";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
