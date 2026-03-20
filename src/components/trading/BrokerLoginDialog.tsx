@@ -41,7 +41,15 @@ export function BrokerLoginDialog({ open, onOpenChange, onConnected }: BrokerLog
   };
 
   const handleLogin = async () => {
-    if (!consumerKey || !mobileNumber || !ucc || !totp || !mpin) {
+    const loginPayload = {
+      consumerKey: consumerKey.trim(),
+      mobileNumber: mobileNumber.trim(),
+      ucc: ucc.trim().toUpperCase(),
+      mpin: mpin.trim(),
+      totp: totp.trim(),
+    };
+
+    if (!loginPayload.consumerKey || !loginPayload.mobileNumber || !loginPayload.ucc || !loginPayload.mpin || !loginPayload.totp) {
       setError('All fields are required');
       return;
     }
@@ -50,14 +58,18 @@ export function BrokerLoginDialog({ open, onOpenChange, onConnected }: BrokerLog
     setError('');
 
     try {
+      console.log('SENDING PAYLOAD:', {
+        consumerKey: loginPayload.consumerKey ? '[provided]' : '',
+        mobileNumber: loginPayload.mobileNumber,
+        ucc: loginPayload.ucc,
+        mpin: loginPayload.mpin ? '[provided]' : '',
+        totp: loginPayload.totp ? '[provided]' : '',
+      });
+
       const { data, error: fnError } = await supabase.functions.invoke('kotak-neo-auth', {
         body: {
           action: 'login',
-          consumerKey,
-          mobileNumber,
-          ucc,
-          totp,
-          mpin,
+          ...loginPayload,
         },
       });
 

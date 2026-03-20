@@ -38,7 +38,18 @@ Deno.serve(async (req) => {
     }
 
     const userId = user.id;
-    const { action, ...payload } = await req.json();
+    const requestBody = await req.json();
+    console.log(
+      "FULL PAYLOAD RECEIVED:",
+      JSON.stringify({
+        ...requestBody,
+        consumerKey: requestBody?.consumerKey ? "[provided]" : undefined,
+        mpin: requestBody?.mpin ? "[provided]" : undefined,
+        totp: requestBody?.totp ? "[provided]" : undefined,
+        otp: requestBody?.otp ? "[provided]" : undefined,
+      })
+    );
+    const { action, ...payload } = requestBody;
 
     const adminClient = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -47,12 +58,50 @@ Deno.serve(async (req) => {
 
     switch (action) {
       case "login": {
-        const { consumerKey, mobileNumber, ucc, totp, mpin } = payload;
+        const consumerKey = typeof payload.consumerKey === "string" ? payload.consumerKey.trim() : "";
+        const mobileNumber = typeof payload.mobileNumber === "string" ? payload.mobileNumber.trim() : "";
+        const ucc = typeof payload.ucc === "string" ? payload.ucc.trim().toUpperCase() : "";
+        const mpin = typeof payload.mpin === "string" ? payload.mpin.trim() : "";
+        const totp =
+          typeof payload.totp === "string"
+            ? payload.totp.trim()
+            : typeof payload.otp === "string"
+              ? payload.otp.trim()
+              : "";
 
-        if (!consumerKey || !mobileNumber || !ucc || !totp || !mpin) {
+        console.log(
+          "Login payload:",
+          JSON.stringify({
+            mobileNumber,
+            userId: ucc,
+            hasConsumerKey: !!consumerKey,
+            hasMpin: !!mpin,
+            hasTotp: !!totp,
+          })
+        );
+
+        if (!consumerKey || !ucc || !mpin || !totp) {
           return new Response(
-            JSON.stringify({ success: false, error: "All fields are required: Consumer Key, Mobile Number, UCC, TOTP, and MPIN" }),
-            { status: 200, headers }
+            JSON.stringify({
+              success: false,
+              error: "Missing credentials",
+              receivedPayload: {
+                action,
+                mobileNumber: payload.mobileNumber ?? null,
+                ucc: payload.ucc ?? null,
+                hasConsumerKey: !!payload.consumerKey,
+                hasMpin: !!payload.mpin,
+                hasTotp: !!(payload.totp || payload.otp),
+              },
+              parsed: {
+                consumerKey: !!consumerKey,
+                mobileNumber,
+                ucc,
+                mpin: !!mpin,
+                totp: !!totp,
+              },
+            }),
+            { status: 400, headers }
           );
         }
 
