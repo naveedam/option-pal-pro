@@ -165,7 +165,7 @@ Deno.serve(async (req) => {
         console.log("Step 1 success: got view token and sid");
 
         // === Step 2: TOTP Validate with MPIN (generates trade token) ===
-        const validateUrl = `${KOTAK_GW_NAPI}/${TOTP_VALIDATE_PATH}`;
+        const validateUrl = `${KOTAK_BASE}/${TOTP_VALIDATE_PATH}`;
         const validateBody = {
           mpin: mpin,
         };
@@ -177,8 +177,10 @@ Deno.serve(async (req) => {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${viewToken}`,
+            "Authorization": consumerKey,
+            "Auth": viewToken,
             "sid": viewSid || "",
+            "neo-fin-key": "neotradeapi",
           },
           body: JSON.stringify(validateBody),
         });
