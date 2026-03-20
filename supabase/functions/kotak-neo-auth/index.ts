@@ -6,12 +6,12 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// Kotak Neo SDK v2 base URLs
-const KOTAK_GW_NAPI = "https://gw-napi.kotaksecurities.com";
+// Kotak Neo SDK v2 base URL (mis domain for session init)
+const KOTAK_BASE = "https://mis.kotaksecurities.com";
 
-// SDK v2 PROD endpoints (from settings.py)
-const TOTP_LOGIN_PATH = "login/1.0/login/v6/totp/login";
-const TOTP_VALIDATE_PATH = "login/1.0/login/v6/totp/validate";
+// SDK v2 PROD endpoints (from totp_api.py / urls.py)
+const TOTP_LOGIN_PATH = "login/1.0/tradeApiLogin";
+const TOTP_VALIDATE_PATH = "login/1.0/tradeApiValidate";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -106,7 +106,7 @@ Deno.serve(async (req) => {
         }
 
         // === Step 1: TOTP Login (generates view token + sid) ===
-        const loginUrl = `${KOTAK_GW_NAPI}/${TOTP_LOGIN_PATH}`;
+        const loginUrl = `${KOTAK_BASE}/${TOTP_LOGIN_PATH}`;
         const loginBody = {
           mobileNumber: mobileNumber,
           ucc: ucc,
@@ -121,6 +121,7 @@ Deno.serve(async (req) => {
           headers: {
             "Content-Type": "application/json",
             "Authorization": consumerKey,
+            "neo-fin-key": "neotradeapi",
           },
           body: JSON.stringify(loginBody),
         });
@@ -164,7 +165,7 @@ Deno.serve(async (req) => {
         console.log("Step 1 success: got view token and sid");
 
         // === Step 2: TOTP Validate with MPIN (generates trade token) ===
-        const validateUrl = `${KOTAK_GW_NAPI}/${TOTP_VALIDATE_PATH}`;
+        const validateUrl = `${KOTAK_BASE}/${TOTP_VALIDATE_PATH}`;
         const validateBody = {
           mpin: mpin,
         };
@@ -176,8 +177,10 @@ Deno.serve(async (req) => {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${viewToken}`,
+            "Authorization": consumerKey,
+            "Auth": viewToken,
             "sid": viewSid || "",
+            "neo-fin-key": "neotradeapi",
           },
           body: JSON.stringify(validateBody),
         });
