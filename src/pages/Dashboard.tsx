@@ -135,8 +135,29 @@ const Dashboard = () => {
       );
     }
 
-    // Feed error
-    if (!marketData && (feedHealth.status === 'error' || feedHealth.status === 'reconnecting')) {
+    // Session expired or broker disconnected — show reconnect (NO auto-retry)
+    if (feedHealth.status === 'broker_disconnected') {
+      return (
+        <div className="h-screen flex flex-col items-center justify-center bg-background gap-4">
+          <Plug className="w-10 h-10 text-warning" />
+          <div className="text-warning font-mono text-sm text-center">
+            Session Expired
+          </div>
+          <p className="text-muted-foreground text-xs text-center max-w-sm">
+            {feedHealth.errorMessage || 'Broker session expired — please reconnect.'}
+          </p>
+          <Button variant="default" size="sm" onClick={openBrokerDialog} className="gap-2">
+            <Plug className="w-4 h-4" /> Reconnect Broker
+          </Button>
+          <Button variant="ghost" size="sm" onClick={handleLogout} className="text-muted-foreground text-xs">
+            Sign out
+          </Button>
+        </div>
+      );
+    }
+
+    // Feed error (API error, not session)
+    if (!marketData && feedHealth.status === 'error') {
       return (
         <div className="h-screen flex flex-col items-center justify-center bg-background gap-4">
           <div className="text-destructive font-mono text-sm text-center">
