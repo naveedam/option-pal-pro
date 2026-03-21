@@ -140,11 +140,12 @@ Deno.serve(async (req) => {
           );
         }
 
-        if (!loginResponse.ok || loginData?.stat === "Not_Ok" || loginData?.error) {
-          const errorMsg = loginData?.emsg || loginData?.message || loginData?.error || loginData?.description || "TOTP login failed";
+        if (!loginResponse.ok || loginData?.stat === "Not_Ok" || loginData?.error || loginData?.code) {
+          const errorMsg = loginData?.emsg || loginData?.message || loginData?.description || (typeof loginData?.error === "string" ? loginData.error : JSON.stringify(loginData?.error)) || "TOTP login failed";
           console.error("TOTP Login failed:", errorMsg);
+          console.error("Full Kotak response:", JSON.stringify(loginData));
           return new Response(
-            JSON.stringify({ success: false, error: `TOTP Login failed: ${errorMsg}`, status: loginResponse.status }),
+            JSON.stringify({ success: false, error: `TOTP Login failed: ${errorMsg}`, status: loginResponse.status, kotakResponse: loginData }),
             { status: 200, headers }
           );
         }
