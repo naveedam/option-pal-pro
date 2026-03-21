@@ -59,7 +59,11 @@ Deno.serve(async (req) => {
     switch (action) {
       case "login": {
         const consumerKey = typeof payload.consumerKey === "string" ? payload.consumerKey.trim() : "";
-        const mobileNumber = typeof payload.mobileNumber === "string" ? payload.mobileNumber.trim() : "";
+        let mobileNumber = typeof payload.mobileNumber === "string" ? payload.mobileNumber.trim() : "";
+        // Kotak requires +91 prefix on mobile numbers
+        if (mobileNumber && !mobileNumber.startsWith("+")) {
+          mobileNumber = "+91" + mobileNumber;
+        }
         const ucc = typeof payload.ucc === "string" ? payload.ucc.trim().toUpperCase() : "";
         const mpin = typeof payload.mpin === "string" ? payload.mpin.trim() : "";
         const totp =
