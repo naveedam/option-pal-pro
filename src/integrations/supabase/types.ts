@@ -17,6 +17,7 @@ export type Database = {
       broker_sessions: {
         Row: {
           access_token: string | null
+          base_url: string | null
           broker: string
           connected_at: string | null
           consumer_key: string | null
@@ -30,6 +31,7 @@ export type Database = {
         }
         Insert: {
           access_token?: string | null
+          base_url?: string | null
           broker?: string
           connected_at?: string | null
           consumer_key?: string | null
@@ -43,6 +45,7 @@ export type Database = {
         }
         Update: {
           access_token?: string | null
+          base_url?: string | null
           broker?: string
           connected_at?: string | null
           consumer_key?: string | null

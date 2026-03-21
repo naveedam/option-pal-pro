@@ -1,0 +1,1 @@
+ALTER TABLE public.broker_sessions ADD COLUMN IF NOT EXISTS base_url TEXT;
