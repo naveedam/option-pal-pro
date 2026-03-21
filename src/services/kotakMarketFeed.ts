@@ -11,9 +11,8 @@ export interface FeedHealth {
   consecutiveErrors: number;
 }
 
-const POLL_INTERVAL_MS = 3000;
-const MAX_RETRY_INTERVAL_MS = 15000;
-const BASE_RETRY_MS = 3000;
+const POLL_INTERVAL_MS = 5000; // 5s to avoid spamming
+const MAX_CONSECUTIVE_ERRORS = 3;
 
 export class KotakMarketFeed {
   private intervalId: ReturnType<typeof setInterval> | null = null;
@@ -27,7 +26,7 @@ export class KotakMarketFeed {
   private onData: (data: MarketData) => void;
   private onHealthChange: (health: FeedHealth) => void;
   private instruments: string[];
-  private retryTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
 
   constructor(
     onData: (data: MarketData) => void,
@@ -41,17 +40,19 @@ export class KotakMarketFeed {
 
   start() {
     this.stop();
+    this.stopped = false;
     this.fetchData();
     this.intervalId = setInterval(() => this.fetchData(), POLL_INTERVAL_MS);
   }
 
   stop() {
+    this.stopped = true;
     if (this.intervalId) { clearInterval(this.intervalId); this.intervalId = null; }
-    if (this.retryTimeoutId) { clearTimeout(this.retryTimeoutId); this.retryTimeoutId = null; }
     this.updateHealth({ status: 'disconnected' });
   }
 
   private async fetchData() {
+    if (this.stopped) return;
     const startTime = Date.now();
 
     try {
@@ -59,21 +60,22 @@ export class KotakMarketFeed {
         body: { instruments: this.instruments, strikeRange: 10 },
       });
 
+      if (this.stopped) return;
+
       if (error) {
         throw new Error(error.message || 'Edge function error');
       }
 
-      // Handle structured broker errors (returned as 200 with success: false)
       if (!data?.success) {
         const code = data?.code;
+        // Session-level errors: stop polling entirely, show reconnect
         if (code === 'NO_SESSION' || code === 'SESSION_EXPIRED') {
+          this.stopPolling();
           this.updateHealth({
             status: 'broker_disconnected',
-            errorMessage: data?.error || 'Broker not connected',
+            errorMessage: data?.error || 'Broker session expired — please reconnect',
             consecutiveErrors: 0,
           });
-          // Stop polling - no point retrying without a session
-          if (this.intervalId) { clearInterval(this.intervalId); this.intervalId = null; }
           return;
         }
         throw new Error(data?.error || 'Failed to fetch market data');
@@ -81,7 +83,6 @@ export class KotakMarketFeed {
 
       const latency = Date.now() - startTime;
       const raw = data.data;
-
       const niftySpot = raw.niftySpot;
       const sensexSpot = raw.sensexSpot;
 
@@ -115,21 +116,32 @@ export class KotakMarketFeed {
         consecutiveErrors: 0,
       });
     } catch (err: any) {
+      if (this.stopped) return;
       const newErrors = this.health.consecutiveErrors + 1;
       console.error('Market feed error:', err.message);
 
-      this.updateHealth({
-        status: newErrors >= 3 ? 'error' : 'reconnecting',
-        errorMessage: err.message,
-        consecutiveErrors: newErrors,
-      });
-
-      if (newErrors >= 5 && this.intervalId) {
-        clearInterval(this.intervalId);
-        this.intervalId = null;
-        const retryDelay = Math.min(BASE_RETRY_MS * newErrors, MAX_RETRY_INTERVAL_MS);
-        this.retryTimeoutId = setTimeout(() => this.start(), retryDelay);
+      // Stop after MAX_CONSECUTIVE_ERRORS — no infinite retry
+      if (newErrors >= MAX_CONSECUTIVE_ERRORS) {
+        this.stopPolling();
+        this.updateHealth({
+          status: 'error',
+          errorMessage: err.message || 'Market data unavailable',
+          consecutiveErrors: newErrors,
+        });
+      } else {
+        this.updateHealth({
+          status: 'reconnecting',
+          errorMessage: err.message,
+          consecutiveErrors: newErrors,
+        });
       }
+    }
+  }
+
+  private stopPolling() {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
     }
   }
 
