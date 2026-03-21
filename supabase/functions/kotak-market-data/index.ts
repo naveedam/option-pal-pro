@@ -6,8 +6,9 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// SDK v2 uses mnapi for data calls (NOT gw-napi)
-const KOTAK_DATA_BASE = "https://mnapi.kotaksecurities.com";
+// SDK v2: baseUrl is returned dynamically from MPIN validation
+// Fallback to gw-napi if no baseUrl stored
+const KOTAK_DATA_BASE_FALLBACK = "https://gw-napi.kotaksecurities.com";
 const EXPIRY_OFFSET_SECONDS = 315511200; // ~10 year offset in scrip master CSV
 
 interface OptionToken {
