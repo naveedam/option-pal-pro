@@ -6,13 +6,20 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// Kotak Neo uses different base URLs for different services
+// Kotak Neo SDK v2: gw-napi uses the "apim/quotes" path variant
 const KOTAK_GW_NAPI = "https://gw-napi.kotaksecurities.com";
+const QUOTES_PATH = "apim/quotes/1.0/quotes/neosymbol";
 
 interface QuoteRequest {
   instruments: string[];
   strikeRange?: number;
 }
+
+// Instrument tokens and exchange segments from Kotak scrip master
+const INSTRUMENT_CONFIG: Record<string, { token: string; exchange: string; stepSize: number }> = {
+  NIFTY:  { token: "26000", exchange: "nse_cm", stepSize: 50 },
+  SENSEX: { token: "1",     exchange: "bse_cm", stepSize: 100 },
+};
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -67,7 +74,7 @@ Deno.serve(async (req) => {
         .update({ is_active: false, updated_at: new Date().toISOString() })
         .eq("id", session.id);
       return new Response(
-        JSON.stringify({ success: false, error: "Broker session expired. Please reconnect Kotak Neo.", code: "SESSION_EXPIRED" }),
+        JSON.stringify({ success: false, error: "Broker session expired. Please reconnect.", code: "SESSION_EXPIRED" }),
         { status: 200, headers }
       );
     }
@@ -75,30 +82,29 @@ Deno.serve(async (req) => {
     const body: QuoteRequest = await req.json();
     const { instruments = ["NIFTY", "SENSEX"], strikeRange = 10 } = body;
 
-    // Build result
+    // Build Kotak API headers (SDK requires neo-fin-key)
+    const kotakHeaders: Record<string, string> = {
+      "Authorization": `Bearer ${session.access_token}`,
+      "Content-Type": "application/json",
+      "neo-fin-key": "neotradeapi",
+      "sid": session.session_token,
+    };
+
     const result: Record<string, any> = { timestamp: Date.now() };
 
     for (const instrument of instruments) {
-      const key = instrument.toLowerCase();
-      const token = getInstrumentToken(instrument);
-      const exchangeSegment = "nse_cm";
-
-      // Kotak Neo quotes endpoint: GET /script-details/1.0/quotes/neosymbol/{neo_symbols}/{quote_type}
-      // neo_symbols format: exchange_segment|instrument_token (URL-encoded)
-      const neoSymbol = `${exchangeSegment}|${token}`;
-      const encodedSymbol = encodeURIComponent(neoSymbol);
-      const quoteUrl = `${KOTAK_GW_NAPI}/script-details/1.0/quotes/neosymbol/${encodedSymbol}/ltp`;
-
-      console.log(`Fetching ${instrument} LTP:`, { url: quoteUrl, token, neoSymbol });
-
-      const kotakHeaders: Record<string, string> = {
-        "Authorization": `Bearer ${session.access_token}`,
-        "Content-Type": "application/json",
-      };
-      // Add sid if available
-      if (session.session_token) {
-        kotakHeaders["sid"] = session.session_token;
+      const config = INSTRUMENT_CONFIG[instrument];
+      if (!config) {
+        console.warn(`Unknown instrument: ${instrument}`);
+        continue;
       }
+
+      const key = instrument.toLowerCase();
+      const neoSymbol = `${config.exchange}|${config.token}`;
+      const encodedSymbol = encodeURIComponent(neoSymbol);
+      const quoteUrl = `${KOTAK_GW_NAPI}/${QUOTES_PATH}/${encodedSymbol}/ltp`;
+
+      console.log(`Fetching ${instrument} LTP:`, { url: quoteUrl, neoSymbol });
 
       const spotResponse = await fetch(quoteUrl, {
         method: "GET",
@@ -117,7 +123,7 @@ Deno.serve(async (req) => {
         result[`${key}ATM`] = 0;
         result[`${key}PCR`] = 0;
 
-        // On first instrument failure, return the error to help debug
+        // Return debug info on first instrument failure
         if (instrument === instruments[0]) {
           return new Response(
             JSON.stringify({
@@ -147,7 +153,6 @@ Deno.serve(async (req) => {
       }
 
       // Parse Kotak quote response
-      // Response format: { message: [{ last_traded_price: "...", change: "...", ... }] }
       const quote = spotData?.message?.[0] || spotData?.data?.[0] || spotData;
       const spotPrice = parseFloat(quote?.last_traded_price || quote?.ltp || quote?.iv || "0");
       const change = parseFloat(quote?.change || quote?.cng || "0");
@@ -163,14 +168,25 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Option chain: fetch multiple strikes around ATM
-      const stepSize = instrument === "NIFTY" ? 50 : 100;
-      const atmStrike = Math.round(spotPrice / stepSize) * stepSize;
+      // Option chain: build strikes around ATM
+      const atmStrike = Math.round(spotPrice / config.stepSize) * config.stepSize;
       console.log(`${instrument} ATM: ${atmStrike}, spot: ${spotPrice}`);
 
-      const chain = await fetchOptionChain(
-        session, instrument, atmStrike, stepSize, strikeRange, kotakHeaders
-      );
+      const chain: any[] = [];
+      for (let i = -strikeRange; i <= strikeRange; i++) {
+        const strike = atmStrike + i * config.stepSize;
+        chain.push({
+          strike,
+          callLTP: 0, putLTP: 0,
+          callOI: 0, putOI: 0,
+          callOIChange: 0, putOIChange: 0,
+          callVolume: 0, putVolume: 0,
+          callBid: 0, callAsk: 0,
+          putBid: 0, putAsk: 0,
+          isATM: strike === atmStrike,
+        });
+      }
+      chain.sort((a, b) => a.strike - b.strike);
 
       result[`${key}Chain`] = chain;
       result[`${key}ATM`] = atmStrike;
@@ -190,65 +206,3 @@ Deno.serve(async (req) => {
     );
   }
 });
-
-async function fetchOptionChain(
-  session: any,
-  instrument: string,
-  atmStrike: number,
-  stepSize: number,
-  strikeRange: number,
-  kotakHeaders: Record<string, string>
-): Promise<any[]> {
-  const chain: any[] = [];
-  const expiry = getNextExpiry();
-  
-  // Fetch CE and PE quotes for each strike around ATM
-  for (let i = -strikeRange; i <= strikeRange; i++) {
-    const strike = atmStrike + i * stepSize;
-    const isATM = strike === atmStrike;
-
-    // Build neo symbols for CE and PE of this strike
-    // For options, we need to use nse_fo exchange segment
-    // The instrument token for options needs to be looked up from scrip master
-    // For now, try to fetch quotes for the strike if we have the token format
-    
-    // Kotak options format: we need the specific instrument tokens from scrip master
-    // Since we don't have them, we'll construct a basic chain entry
-    chain.push({
-      strike,
-      callLTP: 0,
-      putLTP: 0,
-      callOI: 0,
-      putOI: 0,
-      callOIChange: 0,
-      putOIChange: 0,
-      callVolume: 0,
-      putVolume: 0,
-      callBid: 0,
-      callAsk: 0,
-      putBid: 0,
-      putAsk: 0,
-      isATM,
-    });
-  }
-
-  return chain.sort((a, b) => a.strike - b.strike);
-}
-
-function getInstrumentToken(instrument: string): string {
-  // Kotak Neo instrument tokens for indices
-  const tokens: Record<string, string> = {
-    "NIFTY": "26000",
-    "SENSEX": "26065",
-  };
-  return tokens[instrument] || instrument;
-}
-
-function getNextExpiry(): string {
-  const now = new Date();
-  const day = now.getDay();
-  const daysUntilThursday = (4 - day + 7) % 7 || 7;
-  const thursday = new Date(now);
-  thursday.setDate(now.getDate() + (day <= 4 ? (4 - day) : daysUntilThursday));
-  return thursday.toISOString().split("T")[0];
-}
