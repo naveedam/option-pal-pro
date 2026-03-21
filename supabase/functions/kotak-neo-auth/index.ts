@@ -130,6 +130,7 @@ Deno.serve(async (req) => {
 
         const validateText = await validateResponse.text();
         console.log("TOTP Validate status:", validateResponse.status);
+        console.log("TOTP Validate response keys:", validateText.substring(0, 500));
 
         let validateData: any;
         try { validateData = JSON.parse(validateText); } catch {
@@ -149,6 +150,9 @@ Deno.serve(async (req) => {
 
         const tradeToken = validateData?.data?.token || validateData?.token || viewToken;
         const tradeSid = validateData?.data?.sid || validateData?.sid || viewSid;
+        const baseUrl = validateData?.data?.baseUrl || validateData?.baseUrl || null;
+
+        console.log("baseUrl from validate:", baseUrl);
 
         if (!tradeToken) {
           return new Response(
@@ -169,6 +173,7 @@ Deno.serve(async (req) => {
             session_token: tradeSid || crypto.randomUUID(),
             access_token: tradeToken,
             consumer_key: consumerKey,
+            base_url: baseUrl,
             is_active: true,
             connected_at: new Date().toISOString(),
             expires_at: expiresAt.toISOString(),

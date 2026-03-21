@@ -6,8 +6,9 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// SDK v2 uses mnapi for data calls (NOT gw-napi)
-const KOTAK_DATA_BASE = "https://mnapi.kotaksecurities.com";
+// SDK v2: baseUrl is returned dynamically from MPIN validation
+// Fallback to gw-napi if no baseUrl stored
+const KOTAK_FALLBACK_BASE = "https://gw-napi.kotaksecurities.com";
 const EXPIRY_OFFSET_SECONDS = 315511200; // ~10 year offset in scrip master CSV
 
 interface OptionToken {
@@ -23,29 +24,31 @@ let cachedNiftyOptions: OptionToken[] = [];
 let cachedDate: string | null = null;
 
 /**
- * SDK v2 header format for data APIs:
+ * SDK v2 header format for data APIs (per migration guide):
  * - Authorization: {consumer_key}  (NO Bearer prefix!)
- * - Content-Type: application/x-www-form-urlencoded
- * That's it. No Auth, no sid, no neo-fin-key for quotes.
+ * The migration guide also says to use the token from login, not consumer key,
+ * for quotes. We try consumer_key first (old pattern), fall back to access_token.
  */
-function buildDataHeaders(consumerKey: string): Record<string, string> {
+function buildDataHeaders(session: { consumer_key: string; access_token: string; session_token: string }): Record<string, string> {
   return {
-    "Authorization": consumerKey,
-    "Content-Type": "application/x-www-form-urlencoded",
+    "Authorization": session.access_token,
+    "neo-fin-key": "neotradeapi",
+    "sid": session.session_token,
   };
 }
 
-async function fetchScripMaster(consumerKey: string): Promise<string[]> {
-  const url = `${KOTAK_DATA_BASE}/script-details/1.0/masterscrip/file-paths`;
-  console.log("Fetching scrip master file paths...");
-  const res = await fetch(url, { method: "GET", headers: buildDataHeaders(consumerKey) });
+async function fetchScripMaster(baseUrl: string, session: any): Promise<string[]> {
+  // Per migration guide: {{baseUrl}}/scriptdetails/1.0/masterscrip/file-paths
+  const url = `${baseUrl}/scriptdetails/1.0/masterscrip/file-paths`;
+  console.log("Fetching scrip master file paths from:", url);
+  const res = await fetch(url, { method: "GET", headers: buildDataHeaders(session) });
   if (!res.ok) {
     const text = await res.text();
-    console.error("Scrip master file-paths failed:", res.status, text.substring(0, 300));
+    console.error("Scrip master file-paths failed:", res.status, text.substring(0, 500));
     throw new Error(`Scrip master API error (${res.status})`);
   }
   const data = await res.json();
-  return data?.data?.filesPaths || [];
+  return data?.data?.filesPaths || data?.filesPaths || [];
 }
 
 function parseCsvLine(line: string): string[] {
@@ -61,14 +64,14 @@ function parseCsvLine(line: string): string[] {
   return result;
 }
 
-async function fetchAndParseNiftyOptions(consumerKey: string, spotPrice: number, strikeRange: number): Promise<OptionToken[]> {
+async function fetchAndParseNiftyOptions(baseUrl: string, session: any, spotPrice: number, strikeRange: number): Promise<OptionToken[]> {
   const today = new Date().toISOString().split("T")[0];
   if (cachedDate === today && cachedNiftyOptions.length > 0) {
     console.log(`Using cached scrip data (${cachedNiftyOptions.length} contracts)`);
     return filterByStrikeRange(cachedNiftyOptions, spotPrice, strikeRange);
   }
 
-  const filePaths = await fetchScripMaster(consumerKey);
+  const filePaths = await fetchScripMaster(baseUrl, session);
   const nfoCsvUrl = filePaths.find((p: string) => p.toLowerCase().includes("nse_fo"));
   if (!nfoCsvUrl) throw new Error("nse_fo CSV not found in scrip master");
 
@@ -89,7 +92,6 @@ async function fetchAndParseNiftyOptions(consumerKey: string, spotPrice: number,
   const optTypeIdx = headers.indexOf("poptiontype");
   const strikeIdx = headers.findIndex(h => h.startsWith("dstrikeprice"));
   const instTypeIdx = headers.indexOf("pinsttype") !== -1 ? headers.indexOf("pinsttype") : -1;
-  const exchSegIdx = headers.indexOf("pexchseg") !== -1 ? headers.indexOf("pexchseg") : headers.indexOf("pexch");
 
   console.log("CSV headers found:", { symbolIdx, tokenIdx, expiryIdx, optTypeIdx, strikeIdx, instTypeIdx });
 
@@ -115,12 +117,11 @@ async function fetchAndParseNiftyOptions(consumerKey: string, spotPrice: number,
     const rawExpiry = parseFloat(cols[expiryIdx] || "0");
     if (!rawExpiry) continue;
 
-    // Apply the 10-year offset quirk from SDK
     const expiryDate = new Date((rawExpiry + EXPIRY_OFFSET_SECONDS) * 1000);
-    if (expiryDate < now) continue; // Skip expired
+    if (expiryDate < now) continue;
 
     const rawStrike = parseFloat(cols[strikeIdx] || "0");
-    const strike = rawStrike / 100; // CSV stores strike * 100
+    const strike = rawStrike / 100;
 
     if (strike <= 0) continue;
 
@@ -138,7 +139,6 @@ async function fetchAndParseNiftyOptions(consumerKey: string, spotPrice: number,
 
   console.log(`Parsed ${allNiftyOptions.length} NIFTY option contracts`);
 
-  // Cache for the day
   cachedNiftyOptions = allNiftyOptions;
   cachedDate = today;
 
@@ -146,7 +146,6 @@ async function fetchAndParseNiftyOptions(consumerKey: string, spotPrice: number,
 }
 
 function filterByStrikeRange(options: OptionToken[], spotPrice: number, strikeRange: number): OptionToken[] {
-  // Find nearest weekly expiry
   const expiries = [...new Set(options.map(o => o.expiry))].sort();
   const nearestExpiry = expiries[0];
   if (!nearestExpiry) return [];
@@ -154,8 +153,6 @@ function filterByStrikeRange(options: OptionToken[], spotPrice: number, strikeRa
   console.log(`Nearest expiry: ${nearestExpiry}, total expiries: ${expiries.length}`);
 
   const expiryOptions = options.filter(o => o.expiry === nearestExpiry);
-
-  // ATM strike
   const atmStrike = Math.round(spotPrice / 50) * 50;
   const minStrike = atmStrike - strikeRange * 50;
   const maxStrike = atmStrike + strikeRange * 50;
@@ -166,39 +163,38 @@ function filterByStrikeRange(options: OptionToken[], spotPrice: number, strikeRa
 }
 
 async function fetchQuotes(
-  consumerKey: string,
+  baseUrl: string,
+  session: any,
   tokens: OptionToken[],
   indexToken: string
 ): Promise<Record<string, any>> {
-  // Build neoSymbol string: nse_cm|26000,nse_fo|token1,nse_fo|token2,...
   const symbols = [`nse_cm|${indexToken}`];
   for (const t of tokens) {
     symbols.push(`nse_fo|${t.token}`);
   }
 
-  // Batch in groups of 25 to avoid URL length limits
   const batchSize = 25;
   const allQuotes: Record<string, any> = {};
 
   for (let i = 0; i < symbols.length; i += batchSize) {
     const batch = symbols.slice(i, i + batchSize);
     const encoded = encodeURIComponent(batch.join(","));
-    const url = `${KOTAK_DATA_BASE}/script-details/1.0/quotes/neosymbol/${encoded}/all`;
+    // Per migration guide: {{baseUrl}}/scriptdetails/1.0/quotes/
+    const url = `${baseUrl}/scriptdetails/1.0/quotes/neosymbol/${encoded}/all`;
 
     console.log(`Fetching quotes batch ${Math.floor(i / batchSize) + 1}: ${batch.length} symbols`);
-    const res = await fetch(url, { method: "GET", headers: buildDataHeaders(consumerKey) });
+    const res = await fetch(url, { method: "GET", headers: buildDataHeaders(session) });
 
     if (!res.ok) {
       const text = await res.text();
-      console.error(`Quotes batch failed (${res.status}):`, text.substring(0, 300));
+      console.error(`Quotes batch failed (${res.status}):`, text.substring(0, 500));
       if (res.status === 401) {
         return { __error: "SESSION_EXPIRED", __message: "Session expired — please reconnect broker" };
       }
-      continue; // Skip failed batch, don't fail entire chain
+      continue;
     }
 
     const data = await res.json();
-    // Response is typically an array of quote objects
     const quotes = Array.isArray(data) ? data : (data?.data || data?.message || []);
     if (Array.isArray(quotes)) {
       for (const q of quotes) {
@@ -250,7 +246,7 @@ Deno.serve(async (req) => {
       .limit(1)
       .maybeSingle();
 
-    if (!session?.consumer_key) {
+    if (!session?.consumer_key || !session?.access_token) {
       return new Response(
         JSON.stringify({ success: false, error: "Broker not connected — please login first", code: "NO_SESSION" }),
         { status: 200, headers }
@@ -269,19 +265,22 @@ Deno.serve(async (req) => {
 
     const body = await req.json();
     const { strikeRange = 10 } = body;
-    const consumerKey = session.consumer_key;
+
+    // Use the dynamic baseUrl from MPIN validation, or fallback
+    const baseUrl = session.base_url || KOTAK_FALLBACK_BASE;
+    console.log("Using baseUrl:", baseUrl);
 
     // Step 1: Fetch NIFTY spot price
     const niftyIndexToken = "26000";
     const spotEncoded = encodeURIComponent(`nse_cm|${niftyIndexToken}`);
-    const spotUrl = `${KOTAK_DATA_BASE}/script-details/1.0/quotes/neosymbol/${spotEncoded}/ltp`;
+    const spotUrl = `${baseUrl}/scriptdetails/1.0/quotes/neosymbol/${spotEncoded}/ltp`;
 
-    console.log("Fetching NIFTY spot price...");
-    const spotRes = await fetch(spotUrl, { method: "GET", headers: buildDataHeaders(consumerKey) });
+    console.log("Fetching NIFTY spot price from:", spotUrl);
+    const spotRes = await fetch(spotUrl, { method: "GET", headers: buildDataHeaders(session) });
 
     if (!spotRes.ok) {
       const spotText = await spotRes.text();
-      console.error("Spot price failed:", spotRes.status, spotText.substring(0, 300));
+      console.error("Spot price failed:", spotRes.status, spotText.substring(0, 500));
       if (spotRes.status === 401) {
         await adminClient.from("broker_sessions")
           .update({ is_active: false, updated_at: new Date().toISOString() })
@@ -321,10 +320,9 @@ Deno.serve(async (req) => {
     // Step 2: Fetch and parse NIFTY options from scrip master
     let niftyOptions: OptionToken[] = [];
     try {
-      niftyOptions = await fetchAndParseNiftyOptions(consumerKey, niftySpot, strikeRange);
+      niftyOptions = await fetchAndParseNiftyOptions(baseUrl, session, niftySpot, strikeRange);
     } catch (err: any) {
       console.error("Scrip master error:", err.message);
-      // Return spot data with empty chain if scrip master fails
     }
 
     // Step 3: Fetch quotes for all option tokens
@@ -334,7 +332,7 @@ Deno.serve(async (req) => {
     let totalPutOI = 0;
 
     if (niftyOptions.length > 0) {
-      const quotes = await fetchQuotes(consumerKey, niftyOptions, niftyIndexToken);
+      const quotes = await fetchQuotes(baseUrl, session, niftyOptions, niftyIndexToken);
 
       if (quotes.__error === "SESSION_EXPIRED") {
         await adminClient.from("broker_sessions")
@@ -346,7 +344,6 @@ Deno.serve(async (req) => {
         );
       }
 
-      // Step 4: Build option chain
       const strikeMap = new Map<number, any>();
 
       for (const opt of niftyOptions) {
@@ -392,7 +389,6 @@ Deno.serve(async (req) => {
       niftyChain = Array.from(strikeMap.values()).sort((a, b) => a.strike - b.strike);
       console.log(`Built option chain: ${niftyChain.length} strikes, callOI: ${totalCallOI}, putOI: ${totalPutOI}`);
     } else {
-      // Fallback: empty chain with ATM structure
       for (let i = -strikeRange; i <= strikeRange; i++) {
         const strike = atmStrike + i * 50;
         niftyChain.push({
