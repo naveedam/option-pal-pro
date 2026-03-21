@@ -6,20 +6,59 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// Kotak Neo SDK v2: gw-napi uses the "apim/quotes" path variant
 const KOTAK_GW_NAPI = "https://gw-napi.kotaksecurities.com";
-const QUOTES_PATH = "apim/quotes/1.0/quotes/neosymbol";
 
 interface QuoteRequest {
   instruments: string[];
   strikeRange?: number;
 }
 
-// Instrument tokens and exchange segments from Kotak scrip master
 const INSTRUMENT_CONFIG: Record<string, { token: string; exchange: string; stepSize: number }> = {
   NIFTY:  { token: "26000", exchange: "nse_cm", stepSize: 50 },
   SENSEX: { token: "1",     exchange: "bse_cm", stepSize: 100 },
 };
+
+/**
+ * Kotak Neo SDK v2 header format:
+ * - Authorization: Bearer <consumer_key>  (API gateway auth)
+ * - Auth: <trade_token>                   (session token from login)
+ * - sid: <session_id>
+ * - neo-fin-key: "neotradeapi"
+ */
+async function kotakFetch(
+  url: string,
+  session: { access_token: string; session_token: string; consumer_key: string },
+  method: string = "GET",
+  body?: string
+): Promise<{ ok: boolean; status: number; data: any; raw: string }> {
+  const kotakHeaders: Record<string, string> = {
+    "Authorization": `Bearer ${session.consumer_key}`,
+    "Auth": session.access_token,
+    "sid": session.session_token,
+    "neo-fin-key": "neotradeapi",
+    "Content-Type": "application/json",
+  };
+
+  const response = await fetch(url, { method, headers: kotakHeaders, ...(body ? { body } : {}) });
+  const raw = await response.text();
+
+  if (response.status === 401) {
+    // Single retry with same credentials
+    console.warn("Kotak 401 — retrying once...");
+    const retry = await fetch(url, { method, headers: kotakHeaders, ...(body ? { body } : {}) });
+    const retryRaw = await retry.text();
+    if (retry.status === 401) {
+      return { ok: false, status: 401, data: null, raw: retryRaw };
+    }
+    let retryData: any;
+    try { retryData = JSON.parse(retryRaw); } catch { retryData = retryRaw; }
+    return { ok: retry.ok, status: retry.status, data: retryData, raw: retryRaw };
+  }
+
+  let data: any;
+  try { data = JSON.parse(raw); } catch { data = raw; }
+  return { ok: response.ok, status: response.status, data, raw };
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -60,11 +99,16 @@ Deno.serve(async (req) => {
       .limit(1)
       .maybeSingle();
 
-    console.log("Session lookup:", { userId: user.id, found: !!session, error: sessionError?.message });
-
     if (!session?.access_token || !session?.session_token) {
       return new Response(
-        JSON.stringify({ success: false, error: "Broker session invalid — reconnect required", code: "NO_SESSION" }),
+        JSON.stringify({ success: false, error: "Broker not connected — please login first", code: "NO_SESSION" }),
+        { status: 200, headers }
+      );
+    }
+
+    if (!session.consumer_key) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Consumer key missing — please reconnect broker", code: "NO_SESSION" }),
         { status: 200, headers }
       );
     }
@@ -74,7 +118,7 @@ Deno.serve(async (req) => {
         .update({ is_active: false, updated_at: new Date().toISOString() })
         .eq("id", session.id);
       return new Response(
-        JSON.stringify({ success: false, error: "Broker session expired. Please reconnect.", code: "SESSION_EXPIRED" }),
+        JSON.stringify({ success: false, error: "Session expired — please reconnect broker", code: "SESSION_EXPIRED" }),
         { status: 200, headers }
       );
     }
@@ -82,68 +126,58 @@ Deno.serve(async (req) => {
     const body: QuoteRequest = await req.json();
     const { instruments = ["NIFTY", "SENSEX"], strikeRange = 10 } = body;
 
-    // Build Kotak API headers (SDK requires neo-fin-key)
-    const kotakHeaders: Record<string, string> = {
-      "Authorization": `Bearer ${session.access_token}`,
-      "Content-Type": "application/json",
-      "neo-fin-key": "neotradeapi",
-      "sid": session.session_token,
+    const sessionCreds = {
+      access_token: session.access_token,
+      session_token: session.session_token,
+      consumer_key: session.consumer_key,
     };
 
     const result: Record<string, any> = { timestamp: Date.now() };
 
     for (const instrument of instruments) {
       const config = INSTRUMENT_CONFIG[instrument];
-      if (!config) {
-        console.warn(`Unknown instrument: ${instrument}`);
-        continue;
-      }
+      if (!config) continue;
 
       const key = instrument.toLowerCase();
       const neoSymbol = `${config.exchange}|${config.token}`;
       const encodedSymbol = encodeURIComponent(neoSymbol);
-      const quoteUrl = `${KOTAK_GW_NAPI}/${QUOTES_PATH}/${encodedSymbol}/ltp`;
+      const quoteUrl = `${KOTAK_GW_NAPI}/apim/quotes/1.0/quotes/neosymbol/${encodedSymbol}/ltp`;
 
-      console.log(`Fetching ${instrument} LTP:`, { url: quoteUrl, neoSymbol });
+      console.log(`Fetching ${instrument} LTP: ${quoteUrl}`);
 
-      const spotResponse = await fetch(quoteUrl, {
-        method: "GET",
-        headers: kotakHeaders,
-      });
+      const response = await kotakFetch(quoteUrl, sessionCreds);
 
-      const spotText = await spotResponse.text();
-      console.log(`Kotak ${instrument} LTP status:`, spotResponse.status);
-      console.log(`Kotak ${instrument} LTP raw:`, spotText.substring(0, 500));
+      if (response.status === 401) {
+        // Mark session expired
+        await adminClient.from("broker_sessions")
+          .update({ is_active: false, updated_at: new Date().toISOString() })
+          .eq("id", session.id);
 
-      if (!spotResponse.ok) {
-        console.error(`Kotak API error for ${instrument}: ${spotResponse.status}`);
-        result[`${key}Spot`] = 0;
-        result[`${key}Change`] = 0;
-        result[`${key}Chain`] = [];
-        result[`${key}ATM`] = 0;
-        result[`${key}PCR`] = 0;
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "Session expired — please reconnect broker",
+            code: "SESSION_EXPIRED",
+          }),
+          { status: 200, headers }
+        );
+      }
 
+      if (!response.ok) {
+        console.error(`Kotak API error for ${instrument}: ${response.status}`);
         // Return debug info on first instrument failure
         if (instrument === instruments[0]) {
           return new Response(
             JSON.stringify({
               success: false,
-              error: `Kotak API error (${spotResponse.status})`,
+              error: `Kotak API error (${response.status})`,
               code: "KOTAK_API_ERROR",
-              status: spotResponse.status,
-              raw: spotText.substring(0, 300),
-              debug: { url: quoteUrl, method: "GET", neoSymbol },
+              status: response.status,
+              raw: response.raw.substring(0, 300),
             }),
             { status: 200, headers }
           );
         }
-        continue;
-      }
-
-      let spotData: any;
-      try {
-        spotData = JSON.parse(spotText);
-      } catch {
         result[`${key}Spot`] = 0;
         result[`${key}Change`] = 0;
         result[`${key}Chain`] = [];
@@ -152,7 +186,7 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Parse Kotak quote response
+      const spotData = response.data;
       const quote = spotData?.message?.[0] || spotData?.data?.[0] || spotData;
       const spotPrice = parseFloat(quote?.last_traded_price || quote?.ltp || quote?.iv || "0");
       const change = parseFloat(quote?.change || quote?.cng || "0");
@@ -161,28 +195,20 @@ Deno.serve(async (req) => {
       result[`${key}Change`] = change;
 
       if (spotPrice <= 0) {
-        console.warn(`No valid spot price for ${instrument}, skipping chain`);
         result[`${key}Chain`] = [];
         result[`${key}ATM`] = 0;
         result[`${key}PCR`] = 0;
         continue;
       }
 
-      // Option chain: build strikes around ATM
       const atmStrike = Math.round(spotPrice / config.stepSize) * config.stepSize;
-      console.log(`${instrument} ATM: ${atmStrike}, spot: ${spotPrice}`);
-
       const chain: any[] = [];
       for (let i = -strikeRange; i <= strikeRange; i++) {
         const strike = atmStrike + i * config.stepSize;
         chain.push({
-          strike,
-          callLTP: 0, putLTP: 0,
-          callOI: 0, putOI: 0,
-          callOIChange: 0, putOIChange: 0,
-          callVolume: 0, putVolume: 0,
-          callBid: 0, callAsk: 0,
-          putBid: 0, putAsk: 0,
+          strike, callLTP: 0, putLTP: 0, callOI: 0, putOI: 0,
+          callOIChange: 0, putOIChange: 0, callVolume: 0, putVolume: 0,
+          callBid: 0, callAsk: 0, putBid: 0, putAsk: 0,
           isATM: strike === atmStrike,
         });
       }

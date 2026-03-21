@@ -19,6 +19,7 @@ export type Database = {
           access_token: string | null
           broker: string
           connected_at: string | null
+          consumer_key: string | null
           created_at: string
           expires_at: string | null
           id: string
@@ -31,6 +32,7 @@ export type Database = {
           access_token?: string | null
           broker?: string
           connected_at?: string | null
+          consumer_key?: string | null
           created_at?: string
           expires_at?: string | null
           id?: string
@@ -43,6 +45,7 @@ export type Database = {
           access_token?: string | null
           broker?: string
           connected_at?: string | null
+          consumer_key?: string | null
           created_at?: string
           expires_at?: string | null
           id?: string
