@@ -130,6 +130,7 @@ Deno.serve(async (req) => {
 
         const validateText = await validateResponse.text();
         console.log("TOTP Validate status:", validateResponse.status);
+        console.log("TOTP Validate response keys:", validateText.substring(0, 500));
 
         let validateData: any;
         try { validateData = JSON.parse(validateText); } catch {
