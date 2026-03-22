@@ -1,7 +1,7 @@
-import { supabase } from '@/integrations/supabase/client';
-import type { MarketData, OptionData } from '@/hooks/useMarketData';
+import { marketDataProvider } from '@/services/marketDataProvider';
+import type { MarketData } from '@/hooks/useMarketData';
 
-export type FeedStatus = 'connected' | 'disconnected' | 'reconnecting' | 'error' | 'broker_disconnected';
+export type FeedStatus = 'connected' | 'disconnected' | 'reconnecting' | 'error' | 'broker_disconnected' | 'stale';
 
 export interface FeedHealth {
   status: FeedStatus;
@@ -9,38 +9,34 @@ export interface FeedHealth {
   lastTickTime: number | null;
   errorMessage: string | null;
   consecutiveErrors: number;
+  isStale?: boolean;
 }
 
-const POLL_INTERVAL_MS = 5000; // 5s to avoid spamming
-const MAX_CONSECUTIVE_ERRORS = 3;
+const POLL_INTERVAL_MS = 5000;
+const MAX_CONSECUTIVE_ERRORS = 5;
 
 export class KotakMarketFeed {
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private health: FeedHealth = {
-    status: 'disconnected',
-    latencyMs: 0,
-    lastTickTime: null,
-    errorMessage: null,
-    consecutiveErrors: 0,
+    status: 'disconnected', latencyMs: 0, lastTickTime: null,
+    errorMessage: null, consecutiveErrors: 0, isStale: false,
   };
   private onData: (data: MarketData) => void;
   private onHealthChange: (health: FeedHealth) => void;
-  private instruments: string[];
   private stopped = false;
 
   constructor(
     onData: (data: MarketData) => void,
     onHealthChange: (health: FeedHealth) => void,
-    instruments: string[] = ['NIFTY', 'SENSEX']
   ) {
     this.onData = onData;
     this.onHealthChange = onHealthChange;
-    this.instruments = instruments;
   }
 
   start() {
     this.stop();
     this.stopped = false;
+    marketDataProvider.resetCircuitBreaker();
     this.fetchData();
     this.intervalId = setInterval(() => this.fetchData(), POLL_INTERVAL_MS);
   }
@@ -55,86 +51,65 @@ export class KotakMarketFeed {
     if (this.stopped) return;
     const startTime = Date.now();
 
-    try {
-      const { data, error } = await supabase.functions.invoke('kotak-market-data', {
-        body: { instruments: this.instruments, strikeRange: 10 },
-      });
+    const result = await marketDataProvider.fetchMarketData(['NIFTY', 'SENSEX'], 10);
+    if (this.stopped) return;
 
-      if (this.stopped) return;
+    const latency = Date.now() - startTime;
 
-      if (error) {
-        throw new Error(error.message || 'Edge function error');
+    // Check for session errors
+    if (result.error) {
+      const isSession = result.error.includes('expired') || result.error.includes('not connected');
+      if (isSession) {
+        this.stopPolling();
+        this.updateHealth({
+          status: 'broker_disconnected',
+          errorMessage: result.error,
+          consecutiveErrors: 0,
+          isStale: false,
+        });
+        return;
       }
+    }
 
-      if (!data?.success) {
-        const code = data?.code;
-        // Session-level errors: stop polling entirely, show reconnect
-        if (code === 'NO_SESSION' || code === 'SESSION_EXPIRED') {
-          this.stopPolling();
-          this.updateHealth({
-            status: 'broker_disconnected',
-            errorMessage: data?.error || 'Broker session expired — please reconnect',
-            consecutiveErrors: 0,
-          });
-          return;
-        }
-        throw new Error(data?.error || 'Failed to fetch market data');
+    // We got data (fresh or stale)
+    const hasRealData = result.data.niftySpot > 0 || result.data.sensexSpot > 0;
+
+    if (hasRealData) {
+      this.onData(result.data);
+    }
+
+    if (result.isStale && result.error) {
+      const newErrors = this.health.consecutiveErrors + 1;
+
+      if (newErrors >= MAX_CONSECUTIVE_ERRORS && !hasRealData) {
+        this.stopPolling();
+        this.updateHealth({
+          status: 'error',
+          latencyMs: latency,
+          errorMessage: result.error,
+          consecutiveErrors: newErrors,
+          isStale: true,
+        });
+      } else {
+        // Stale but we have cached data — keep going
+        this.updateHealth({
+          status: hasRealData ? 'stale' : 'reconnecting',
+          latencyMs: latency,
+          lastTickTime: result.lastFreshAt,
+          errorMessage: result.error,
+          consecutiveErrors: newErrors,
+          isStale: true,
+        });
       }
-
-      const latency = Date.now() - startTime;
-      const raw = data.data;
-      const niftySpot = raw.niftySpot;
-      const sensexSpot = raw.sensexSpot;
-
-      if ((!niftySpot || niftySpot <= 0) && (!sensexSpot || sensexSpot <= 0)) {
-        throw new Error('Invalid spot prices received');
-      }
-
-      const niftyChain: OptionData[] = (raw.niftyChain || []).filter((r: any) => r.strike > 0);
-      const sensexChain: OptionData[] = (raw.sensexChain || []).filter((r: any) => r.strike > 0);
-
-      const marketData: MarketData = {
-        niftySpot: niftySpot || 0,
-        sensexSpot: sensexSpot || 0,
-        niftyChange: raw.niftyChange || 0,
-        sensexChange: raw.sensexChange || 0,
-        niftyPCR: raw.niftyPCR || 0,
-        sensexPCR: raw.sensexPCR || 0,
-        niftyATM: raw.niftyATM || 0,
-        sensexATM: raw.sensexATM || 0,
-        niftyChain,
-        sensexChain,
-        timestamp: raw.timestamp || Date.now(),
-      };
-
-      this.onData(marketData);
+    } else if (hasRealData) {
       this.updateHealth({
         status: 'connected',
         latencyMs: latency,
         lastTickTime: Date.now(),
         errorMessage: null,
         consecutiveErrors: 0,
+        isStale: false,
       });
-    } catch (err: any) {
-      if (this.stopped) return;
-      const newErrors = this.health.consecutiveErrors + 1;
-      console.error('Market feed error:', err.message);
-
-      // Stop after MAX_CONSECUTIVE_ERRORS — no infinite retry
-      if (newErrors >= MAX_CONSECUTIVE_ERRORS) {
-        this.stopPolling();
-        this.updateHealth({
-          status: 'error',
-          errorMessage: err.message || 'Market data unavailable',
-          consecutiveErrors: newErrors,
-        });
-      } else {
-        this.updateHealth({
-          status: 'reconnecting',
-          errorMessage: err.message,
-          consecutiveErrors: newErrors,
-        });
-      }
     }
   }
 
@@ -150,7 +125,5 @@ export class KotakMarketFeed {
     this.onHealthChange({ ...this.health });
   }
 
-  getHealth(): FeedHealth {
-    return { ...this.health };
-  }
+  getHealth(): FeedHealth { return { ...this.health }; }
 }
