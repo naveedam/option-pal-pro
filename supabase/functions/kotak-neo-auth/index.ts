@@ -191,17 +191,34 @@ Deno.serve(async (req) => {
       }
 
       case "status": {
-        const { data: session } = await supabase
+        // Use adminClient with same query pattern as kotak-market-data
+        // to avoid maybeSingle() returning null when multiple rows exist
+        const { data: session } = await adminClient
           .from("broker_sessions")
-          .select("is_active, connected_at, expires_at")
+          .select("is_active, connected_at, expires_at, access_token, consumer_key")
+          .eq("user_id", userId)
           .eq("broker", "kotak_neo")
+          .eq("is_active", true)
+          .order("created_at", { ascending: false })
+          .limit(1)
           .maybeSingle();
 
         const isExpired = session?.expires_at ? new Date(session.expires_at) < new Date() : true;
+        const hasCredentials = !!session?.access_token && !!session?.consumer_key;
+
+        console.log(`[Status] user=${userId} active=${session?.is_active} expired=${isExpired} hasCreds=${hasCredentials}`);
+
+        if (session?.is_active && isExpired) {
+          // Auto-deactivate expired sessions
+          await adminClient.from("broker_sessions")
+            .update({ is_active: false, updated_at: new Date().toISOString() })
+            .eq("user_id", userId)
+            .eq("broker", "kotak_neo");
+        }
 
         return new Response(
           JSON.stringify({
-            connected: session?.is_active && !isExpired,
+            connected: session?.is_active && !isExpired && hasCredentials,
             connectedAt: session?.connected_at,
             expiresAt: session?.expires_at,
           }),
