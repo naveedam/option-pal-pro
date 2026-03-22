@@ -12,17 +12,20 @@ import {
 import { Loader2, Shield, CheckCircle2, AlertCircle } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import type { BrokerSessionState } from '@/services/brokerSession';
 
 interface BrokerLoginDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onConnected: () => void;
+  onConnected: () => Promise<BrokerSessionState>;
 }
 
 export function BrokerLoginDialog({ open, onOpenChange, onConnected }: BrokerLoginDialogProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('KOTAK NEO CONNECTED');
+  const [successDescription, setSuccessDescription] = useState('Authentication and market feed are both connected.');
 
   const [consumerKey, setConsumerKey] = useState('');
   const [mobileNumber, setMobileNumber] = useState('');
@@ -38,6 +41,8 @@ export function BrokerLoginDialog({ open, onOpenChange, onConnected }: BrokerLog
     setUcc('');
     setTotp('');
     setMpin('');
+    setSuccessMessage('KOTAK NEO CONNECTED');
+    setSuccessDescription('Authentication and market feed are both connected.');
   };
 
   const handleLogin = async () => {
@@ -79,9 +84,25 @@ export function BrokerLoginDialog({ open, onOpenChange, onConnected }: BrokerLog
         return;
       }
 
+      console.log('[BrokerLoginDialog] Login success — validating market data layer');
+      const brokerState = await onConnected();
+      const marketReady = brokerState.marketData === 'connected';
+
+      setSuccessMessage(marketReady ? 'KOTAK NEO CONNECTED' : 'BROKER AUTHENTICATED');
+      setSuccessDescription(
+        marketReady
+          ? 'Authentication and market feed are both connected.'
+          : brokerState.marketDataError || 'Authentication succeeded, but the market feed is unavailable.',
+      );
       setSuccess(true);
-      toast.success('Kotak Neo connected successfully');
-      onConnected();
+
+      if (marketReady) {
+        toast.success('Kotak Neo connected successfully');
+      } else {
+        toast.warning('Broker login succeeded, but market feed validation failed', {
+          description: brokerState.marketDataError || 'Retry market feed validation from the dashboard.',
+        });
+      }
 
       setTimeout(() => {
         onOpenChange(false);
@@ -109,7 +130,7 @@ export function BrokerLoginDialog({ open, onOpenChange, onConnected }: BrokerLog
           </DialogTitle>
           <DialogDescription className="text-muted-foreground">
             {success
-              ? 'Broker connected and ready for trading.'
+              ? successDescription
               : 'Enter your Kotak Neo API credentials to connect.'}
           </DialogDescription>
         </DialogHeader>
@@ -124,9 +145,9 @@ export function BrokerLoginDialog({ open, onOpenChange, onConnected }: BrokerLog
         {success ? (
           <div className="flex flex-col items-center gap-4 py-4">
             <CheckCircle2 className="w-12 h-12 text-profit" />
-            <p className="text-sm text-profit font-semibold">KOTAK NEO CONNECTED</p>
+            <p className="text-sm text-profit font-semibold">{successMessage}</p>
             <p className="text-xs text-muted-foreground text-center">
-              Session active. You can now execute live trades through Kotak Neo.
+              {successDescription}
             </p>
           </div>
         ) : (

@@ -201,7 +201,7 @@ function generateSignals(data: MarketData): TradeSignal[] {
 }
 
 // ─── Hook ────────────────────────────────────────────────────────────
-export function useMarketData(isPaperTrading: boolean, brokerConnected: boolean = false) {
+export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolean = false) {
   const [marketData, setMarketData] = useState<MarketData | null>(null);
   const [signals, setSignals] = useState<TradeSignal[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
@@ -244,7 +244,7 @@ export function useMarketData(isPaperTrading: boolean, brokerConnected: boolean 
 
   // Timeout fallback: if no data after 8s, show error
   useEffect(() => {
-    if (marketData || !brokerConnected) return;
+    if (marketData || !marketDataEnabled) return;
     const timeout = setTimeout(() => {
       if (!marketData) {
         setFeedHealth(prev => ({
@@ -255,16 +255,15 @@ export function useMarketData(isPaperTrading: boolean, brokerConnected: boolean 
       }
     }, 8000);
     return () => clearTimeout(timeout);
-  }, [marketData, brokerConnected]);
+  }, [marketData, marketDataEnabled]);
 
   useEffect(() => {
-    // Only start the market feed when broker is connected
-    if (!brokerConnected) {
+    if (!marketDataEnabled) {
       setFeedHealth({
-        status: 'broker_disconnected',
+        status: 'disconnected',
         latencyMs: 0,
         lastTickTime: null,
-        errorMessage: 'Broker not connected',
+        errorMessage: 'Market feed unavailable',
         consecutiveErrors: 0,
       });
       return;
@@ -274,7 +273,7 @@ export function useMarketData(isPaperTrading: boolean, brokerConnected: boolean 
     feedRef.current = feed;
     feed.start();
     return () => feed.stop();
-  }, [handleMarketData, brokerConnected]);
+  }, [handleMarketData, marketDataEnabled]);
 
   useEffect(() => {
     const totalPnL = positions.reduce((s, p) => s + p.pnl, 0);

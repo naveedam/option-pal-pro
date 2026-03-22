@@ -366,7 +366,7 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json();
-    const { strikeRange = 10 } = body;
+    const { strikeRange = 10, validateOnly = false, symbol = "NIFTY" } = body;
 
     // Use base_url from session (set during login) or fallback
     const baseUrl = (session.base_url || FALLBACK_BASE).replace(/\/$/, "");
@@ -374,6 +374,7 @@ Deno.serve(async (req) => {
 
     console.log(`[MarketData] Using base URL: ${baseUrl}`);
     console.log(`[MarketData] Consumer key present: ${!!consumerKey}`);
+    console.log(`[MarketValidation] requested=${validateOnly} symbol=${symbol}`);
 
     // ─── Step 1: Fetch NIFTY spot via quotes API ─────────────────
     let niftySpot = 0;
@@ -410,10 +411,33 @@ Deno.serve(async (req) => {
 
       console.log(`[MarketData] NIFTY spot: ${niftySpot}, change: ${niftyChange}`);
     } catch (err: any) {
+      console.log(`[MarketValidation] result=failed error=${err.message}`);
       console.error(`[MarketData] Spot price fetch failed: ${err.message}`);
       return new Response(
         JSON.stringify({ success: false, error: `Kotak API unavailable: ${err.message}`, code: "KOTAK_API_ERROR" }),
         { status: 200, headers }
+      );
+    }
+
+    if (validateOnly) {
+      const marketDataState = niftySpot > 0 ? "connected" : "disconnected";
+      console.log(`[MarketValidation] result=${marketDataState} symbol=${symbol} quote=${niftySpot}`);
+
+      return new Response(
+        JSON.stringify({
+          success: niftySpot > 0,
+          validation: {
+            auth: "connected",
+            marketData: marketDataState,
+            trading: "connected",
+            symbol,
+            quote: niftySpot,
+            error: niftySpot > 0 ? null : "Market feed unavailable",
+          },
+          error: niftySpot > 0 ? null : "Market feed unavailable",
+          code: niftySpot > 0 ? "VALIDATION_OK" : "MARKET_VALIDATION_FAILED",
+        }),
+        { headers },
       );
     }
 

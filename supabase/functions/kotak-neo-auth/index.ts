@@ -182,10 +182,16 @@ Deno.serve(async (req) => {
           { onConflict: "user_id,broker" }
         );
 
-        console.log("Broker session stored successfully");
+        console.log(`[Login] success user=${userId} auth=connected trading=connected`);
 
         return new Response(
-          JSON.stringify({ success: true, message: "Broker connected successfully", expiresAt: expiresAt.toISOString() }),
+          JSON.stringify({
+            success: true,
+            message: "Broker connected successfully",
+            auth: "connected",
+            trading: "connected",
+            expiresAt: expiresAt.toISOString(),
+          }),
           { headers }
         );
       }
@@ -219,6 +225,8 @@ Deno.serve(async (req) => {
         return new Response(
           JSON.stringify({
             connected: session?.is_active && !isExpired && hasCredentials,
+            auth: session?.is_active && !isExpired && hasCredentials ? "connected" : "disconnected",
+            trading: session?.is_active && !isExpired && hasCredentials ? "connected" : "disconnected",
             connectedAt: session?.connected_at,
             expiresAt: session?.expires_at,
           }),

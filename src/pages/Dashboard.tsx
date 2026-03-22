@@ -16,7 +16,8 @@ import { useMarketData } from '@/hooks/useMarketData';
 import { useBrokerConnection } from '@/hooks/useBrokerConnection';
 import { useTradeStore } from '@/hooks/useTradeStore';
 import { supabase } from '@/integrations/supabase/client';
-import { LogOut, Plug } from 'lucide-react';
+import { isBrokerAuthenticated, isBrokerFullyConnected, isMarketDataConnected } from '@/services/brokerSession';
+import { AlertTriangle, LogOut, Plug } from 'lucide-react';
 
 const Dashboard = () => {
   const [isPaperTrading, setIsPaperTrading] = useState(true);
@@ -31,13 +32,11 @@ const Dashboard = () => {
     riskSettings, setRiskSettings, riskLimitReached,
     executePaperTrade, validateRiskLimits, addLivePosition,
     exitPosition, dismissSignal, feedHealth, retryFeed,
-  } = useMarketData(isPaperTrading, broker.isConnected);
+  } = useMarketData(isPaperTrading, isMarketDataConnected(broker));
 
   const openBrokerDialog = useCallback(() => setBrokerDialogOpen(true), []);
 
-  const handleBrokerConnected = useCallback(() => {
-    broker.refresh();
-  }, [broker]);
+  const handleBrokerConnected = useCallback(() => broker.refresh({ validateMarketData: true, reason: 'login' }), [broker]);
 
   const handleConfirmTrade = async (signal: typeof signals[0]) => {
     const riskCheck = validateRiskLimits();
@@ -57,7 +56,7 @@ const Dashboard = () => {
         toast.error('Order blocked', { description: result.reason });
       }
     } else {
-      if (!broker.isConnected) {
+      if (broker.trading !== 'connected') {
         toast.error('Broker not connected', { description: 'Please connect Kotak Neo first.' });
         openBrokerDialog();
         return;
@@ -115,15 +114,15 @@ const Dashboard = () => {
     }
 
     // Broker not connected
-    if (!broker.isConnected && !marketData) {
+    if (!isBrokerAuthenticated(broker) && !marketData) {
       return (
         <div className="h-screen flex flex-col items-center justify-center bg-background gap-4">
           <Plug className="w-10 h-10 text-warning" />
           <div className="text-foreground font-mono text-sm text-center">
-            Broker not connected
+            Not logged in
           </div>
           <p className="text-muted-foreground text-xs text-center max-w-sm">
-            Connect your Kotak Neo broker to stream live market data.
+            Connect your Kotak Neo broker to authenticate your trading session.
           </p>
           <Button variant="default" onClick={openBrokerDialog} className="gap-2">
             <Plug className="w-4 h-4" /> Connect Kotak Neo
@@ -135,13 +134,50 @@ const Dashboard = () => {
       );
     }
 
-    // Session expired or broker disconnected — show reconnect (NO auto-retry)
+    if (isBrokerAuthenticated(broker) && !isMarketDataConnected(broker)) {
+      return (
+        <div className="h-screen flex flex-col items-center justify-center bg-background gap-4">
+          <AlertTriangle className="w-10 h-10 text-warning" />
+          <div className="text-warning font-mono text-sm text-center">
+            Market feed unavailable
+          </div>
+          <p className="text-muted-foreground text-xs text-center max-w-sm">
+            {broker.marketDataError || 'Authentication succeeded, but market data validation failed.'}
+          </p>
+          <div className="flex gap-3">
+            <Button
+              variant="default"
+              size="sm"
+              onClick={async () => {
+                const nextState = await broker.retryMarketValidation();
+                if (nextState.marketData === 'connected') {
+                  toast.success('Market feed connected');
+                  return;
+                }
+
+                toast.error('Market feed unavailable', {
+                  description: nextState.marketDataError || 'Retry failed. Reconnect broker if the issue persists.',
+                });
+              }}
+            >
+              Retry Market Feed
+            </Button>
+            <Button variant="outline" size="sm" onClick={openBrokerDialog} className="gap-2">
+              <Plug className="w-4 h-4" /> Reconnect Broker
+            </Button>
+          </div>
+          <Button variant="ghost" size="sm" onClick={handleLogout} className="text-muted-foreground text-xs">Sign out</Button>
+        </div>
+      );
+    }
+
+    // Session expired or broker disconnected during feed runtime
     if (feedHealth.status === 'broker_disconnected') {
       return (
         <div className="h-screen flex flex-col items-center justify-center bg-background gap-4">
           <Plug className="w-10 h-10 text-warning" />
           <div className="text-warning font-mono text-sm text-center">
-            Session Expired
+            Session expired
           </div>
           <p className="text-muted-foreground text-xs text-center max-w-sm">
             {feedHealth.errorMessage || 'Broker session expired — please reconnect.'}
@@ -203,14 +239,14 @@ const Dashboard = () => {
             <h1 className="font-mono text-sm font-bold text-primary terminal-glow tracking-wider">
               OPTIQ<span className="text-muted-foreground">.TRADE</span>
             </h1>
-            <BrokerStatus isConnected={broker.isConnected} isPaperTrading={isPaperTrading} expiresAt={broker.expiresAt} />
+            <BrokerStatus state={broker} isPaperTrading={isPaperTrading} expiresAt={broker.expiresAt} />
             <FeedStatus health={feedHealth} />
-            {!broker.isConnected && (
+            {!isBrokerAuthenticated(broker) && (
               <Button variant="terminal" size="sm" onClick={openBrokerDialog} className="text-xs gap-1">
                 <Plug className="w-3 h-3" /> CONNECT BROKER
               </Button>
             )}
-            {broker.isConnected && (
+            {isBrokerAuthenticated(broker) && (
               <Button variant="ghost" size="sm" onClick={async () => { await broker.disconnect(); setIsPaperTrading(true); toast.info('Broker disconnected'); }} className="text-xs text-muted-foreground">
                 DISCONNECT
               </Button>
@@ -230,7 +266,7 @@ const Dashboard = () => {
               <Switch
                 checked={!isPaperTrading}
                 onCheckedChange={(checked) => {
-                  if (checked && !broker.isConnected) {
+                  if (checked && !isBrokerFullyConnected(broker)) {
                     toast.warning('Connect Kotak Neo broker first');
                     openBrokerDialog();
                     return;
