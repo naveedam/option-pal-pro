@@ -6,9 +6,15 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const KOTAK_API_BASE = "https://gw-napi.kotaksecurities.com";
+// ─── SDK-aligned URL config ──────────────────────────────────────────
+// From Kotak Neo SDK v2: neo_api_client/urls.py & settings.py
+const FALLBACK_BASE = "https://gw-napi.kotaksecurities.com";
 
-// ─── Retry with backoff (handles 503) ─────────────────────────────────
+// PROD_URL from SDK settings.py
+const QUOTES_PATH = "script-details/1.0/quotes/neosymbol/{neo_symbols}/{quote_type}";
+const SCRIP_MASTER_PATH = "script-details/1.0/masterscrip/file-paths";
+
+// ─── Retry with backoff ──────────────────────────────────────────────
 async function fetchWithRetry(
   url: string,
   options: RequestInit,
@@ -40,147 +46,261 @@ async function fetchWithRetry(
   throw lastError || new Error("Max retries exceeded");
 }
 
-function buildHeaders(accessToken: string): Record<string, string> {
-  return {
-    "Authorization": `Bearer ${accessToken}`,
-    "Content-Type": "application/json",
-  };
-}
-
-// ─── Kotak POST-based Quote API with endpoint fallback ───────────────
-const QUOTE_ENDPOINTS = [
-  "/apimarketdata/instruments/quote",
-  "/apimarketdata/quote",
-  "/apimarketdata/instruments/quotes",
-];
-
-async function fetchQuote(accessToken: string, instrumentToken: string): Promise<any> {
-  for (const endpoint of QUOTE_ENDPOINTS) {
-    const url = `${KOTAK_API_BASE}${endpoint}`;
-    console.log(`[Quote] Trying: POST ${url}`);
-
-    const res = await fetchWithRetry(url, {
-      method: "POST",
-      headers: buildHeaders(accessToken),
-      body: JSON.stringify({ instrumentToken }),
-    }, 2, 1000);
-
-    if (res.status === 404) {
-      const text = await res.text();
-      console.log(`[Quote] 404 on ${endpoint}, trying next. Body: ${text.substring(0, 200)}`);
-      continue;
-    }
-
-    if (!res.ok) {
-      const text = await res.text();
-      console.error(`[Quote] Error ${res.status} on ${endpoint}: ${text.substring(0, 500)}`);
-      if (res.status === 401) {
-        return { __error: "SESSION_EXPIRED", __message: "Session expired — please reconnect broker" };
-      }
-      throw new Error(`Kotak Quote API error (${res.status}): ${text.substring(0, 200)}`);
-    }
-
-    const data = await res.json();
-    console.log(`[Quote] Success on ${endpoint} for ${instrumentToken}: keys=${Object.keys(data).join(",")}`);
-    return data;
-  }
-
-  throw new Error("All quote endpoints returned 404 — Kotak API may have changed");
-}
-
-// ─── Kotak POST-based Option Chain API ───────────────────────────────
-async function fetchOptionChain(
-  accessToken: string,
-  instrumentToken: string,
-  strikeRange: number,
-  atmStrike: number,
+// ─── SDK-aligned Quote Fetch (GET, not POST!) ────────────────────────
+// From SDK: quotes_neo_symbol_api.py
+// Format: exchange_segment|instrument_token (URL-encoded)
+// Auth header = consumer_key (not Bearer token)
+// Content-Type = application/x-www-form-urlencoded
+async function fetchQuotes(
+  baseUrl: string,
+  consumerKey: string,
+  instrumentTokens: Array<{ instrument_token: string; exchange_segment: string }>,
+  quoteType: string = "all",
 ): Promise<any> {
-  const url = `${KOTAK_API_BASE}/apimarketdata/optionchain`;
-  const body: any = { instrumentToken };
+  // Build neo_symbol string: "nse_cm|26000,nse_fo|12345"
+  const neoSymbolStr = instrumentTokens
+    .map(t => `${t.exchange_segment}|${t.instrument_token}`)
+    .join(",");
+  const encodedSymbols = encodeURIComponent(neoSymbolStr);
+
+  const url = `${baseUrl}/${QUOTES_PATH}`
+    .replace("{neo_symbols}", encodedSymbols)
+    .replace("{quote_type}", quoteType || "all");
+
+  console.log(`[Quotes] GET ${url}`);
+  console.log(`[Quotes] Tokens: ${neoSymbolStr}`);
 
   const res = await fetchWithRetry(url, {
-    method: "POST",
-    headers: buildHeaders(accessToken),
-    body: JSON.stringify(body),
-  }, 3, 1000);
+    method: "GET",
+    headers: {
+      "Authorization": consumerKey,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+  }, 2, 1000);
+
+  if (res.status === 401 || res.status === 403) {
+    const text = await res.text();
+    console.error(`[Quotes] Auth error ${res.status}: ${text.substring(0, 300)}`);
+    return { __error: "SESSION_EXPIRED", __message: "Session expired — please reconnect broker" };
+  }
 
   if (!res.ok) {
     const text = await res.text();
-    console.error(`OptionChain API error ${res.status}: ${text.substring(0, 500)}`);
-    if (res.status === 401) {
-      return { __error: "SESSION_EXPIRED", __message: "Session expired — please reconnect broker" };
-    }
-    throw new Error(`Kotak OptionChain API error (${res.status}): ${text.substring(0, 200)}`);
+    console.error(`[Quotes] Error ${res.status}: ${text.substring(0, 500)}`);
+    throw new Error(`Kotak Quotes API error (${res.status}): ${text.substring(0, 200)}`);
   }
 
   const data = await res.json();
-  console.log(`OptionChain response: keys=${Object.keys(data).join(",")}`);
+  console.log(`[Quotes] Success, keys: ${JSON.stringify(Object.keys(data))}`);
   return data;
 }
 
-// ─── Build option chain from API response ────────────────────────────
-function buildChainFromResponse(data: any, atmStrike: number, strikeRange: number): {
-  chain: any[];
-  totalCallOI: number;
-  totalPutOI: number;
-} {
+// ─── Fetch Scrip Master CSV file paths ───────────────────────────────
+async function fetchScripMasterPaths(baseUrl: string, consumerKey: string): Promise<any> {
+  const url = `${baseUrl}/${SCRIP_MASTER_PATH}`;
+  console.log(`[ScripMaster] GET ${url}`);
+
+  const res = await fetchWithRetry(url, {
+    method: "GET",
+    headers: {
+      "Authorization": consumerKey,
+    },
+  }, 2, 1000);
+
+  if (!res.ok) {
+    const text = await res.text();
+    console.error(`[ScripMaster] Error ${res.status}: ${text.substring(0, 500)}`);
+    throw new Error(`Scrip master API error (${res.status})`);
+  }
+
+  return res.json();
+}
+
+// ─── Download and parse scrip master CSV for NIFTY options ───────────
+async function fetchNiftyOptionTokens(
+  baseUrl: string,
+  consumerKey: string,
+  atmStrike: number,
+  strikeRange: number,
+): Promise<Array<{ instrument_token: string; exchange_segment: string; strike: number; optionType: string }>> {
+  try {
+    // Get scrip master file paths
+    const pathsData = await fetchScripMasterPaths(baseUrl, consumerKey);
+    console.log(`[ScripMaster] Response keys: ${JSON.stringify(Object.keys(pathsData))}`);
+
+    // Find nse_fo CSV URL
+    const fileList = pathsData?.filesPaths || pathsData?.data?.filesPaths || pathsData?.result || [];
+    let nfoUrl = "";
+
+    if (Array.isArray(fileList)) {
+      for (const item of fileList) {
+        const path = item?.path || item?.filePath || item?.url || "";
+        if (typeof path === "string" && path.includes("nse_fo")) {
+          nfoUrl = path;
+          break;
+        }
+      }
+    }
+
+    if (!nfoUrl) {
+      console.log("[ScripMaster] nse_fo CSV URL not found in response:", JSON.stringify(pathsData).substring(0, 500));
+      return [];
+    }
+
+    console.log(`[ScripMaster] Downloading nse_fo CSV from: ${nfoUrl}`);
+    const csvRes = await fetch(nfoUrl);
+    if (!csvRes.ok) {
+      console.error(`[ScripMaster] CSV download failed: ${csvRes.status}`);
+      return [];
+    }
+
+    const csvText = await csvRes.text();
+    const lines = csvText.split("\n");
+    console.log(`[ScripMaster] CSV lines: ${lines.length}`);
+
+    // Parse CSV to find NIFTY options near ATM
+    // CSV format varies — look for NIFTY rows with strike info
+    const tokens: Array<{ instrument_token: string; exchange_segment: string; strike: number; optionType: string }> = [];
+    const header = lines[0]?.toLowerCase() || "";
+    const headers = header.split(",");
+
+    // Find column indices
+    const tokenIdx = headers.findIndex(h => h.includes("token") || h.includes("instrument_token") || h.includes("pSymbol"));
+    const symbolIdx = headers.findIndex(h => h.includes("symbol") || h.includes("trading_symbol") || h.includes("pTrdSymbol"));
+    const strikeIdx = headers.findIndex(h => h.includes("strike") || h.includes("strike_price") || h.includes("dStrikePrice"));
+    const optTypeIdx = headers.findIndex(h => h.includes("option") || h.includes("optiontype") || h.includes("pOptionType"));
+    const expiryIdx = headers.findIndex(h => h.includes("expiry") || h.includes("pExpiryDate") || h.includes("dExpiry"));
+
+    console.log(`[ScripMaster] Column indices — token:${tokenIdx} symbol:${symbolIdx} strike:${strikeIdx} optType:${optTypeIdx} expiry:${expiryIdx}`);
+
+    if (tokenIdx < 0) {
+      // Try alternate format: fixed column positions for Kotak scrip master
+      // Kotak CSV: pSymbol, pGroup, pExchSeg, pInstType, pSymbolName, pTrdSymbol, pOptionType, dStrikePrice, ...
+      console.log(`[ScripMaster] Headers: ${headers.slice(0, 15).join(", ")}`);
+      return [];
+    }
+
+    // Find the nearest expiry for NIFTY options
+    const today = new Date();
+    let nearestExpiry = "";
+    const minStrike = atmStrike - strikeRange * 50;
+    const maxStrike = atmStrike + strikeRange * 50;
+
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(",");
+      if (cols.length < Math.max(tokenIdx, symbolIdx, strikeIdx) + 1) continue;
+
+      const symbol = cols[symbolIdx]?.trim().toUpperCase() || "";
+      if (!symbol.includes("NIFTY") || symbol.includes("BANKNIFTY") || symbol.includes("FINNIFTY")) continue;
+
+      const strike = parseFloat(cols[strikeIdx] || "0");
+      // Kotak stores strikes as strike * 100 in some formats
+      const normalizedStrike = strike > 100000 ? strike / 100 : strike;
+      if (normalizedStrike < minStrike || normalizedStrike > maxStrike) continue;
+
+      const optType = cols[optTypeIdx]?.trim().toUpperCase() || "";
+      if (optType !== "CE" && optType !== "PE") continue;
+
+      const expiry = cols[expiryIdx]?.trim() || "";
+
+      // Track nearest expiry
+      if (!nearestExpiry && expiry) {
+        nearestExpiry = expiry;
+      }
+
+      if (expiry === nearestExpiry) {
+        tokens.push({
+          instrument_token: cols[tokenIdx].trim(),
+          exchange_segment: "nse_fo",
+          strike: normalizedStrike,
+          optionType: optType,
+        });
+      }
+    }
+
+    console.log(`[ScripMaster] Found ${tokens.length} NIFTY option tokens near ATM ${atmStrike} (expiry: ${nearestExpiry})`);
+    return tokens;
+  } catch (err: any) {
+    console.error(`[ScripMaster] Error: ${err.message}`);
+    return [];
+  }
+}
+
+// ─── Build option chain from batch quotes ────────────────────────────
+async function buildOptionChain(
+  baseUrl: string,
+  consumerKey: string,
+  optionTokens: Array<{ instrument_token: string; exchange_segment: string; strike: number; optionType: string }>,
+  atmStrike: number,
+): Promise<{ chain: any[]; totalCallOI: number; totalPutOI: number }> {
+  const strikeMap = new Map<number, any>();
   let totalCallOI = 0;
   let totalPutOI = 0;
-  const strikeMap = new Map<number, any>();
 
-  // Try to extract option chain data from various response formats
-  const options = data?.result?.optionChainDetails
-    || data?.data?.optionChainDetails
-    || data?.optionChainDetails
-    || data?.result?.dataList
-    || data?.data?.dataList
-    || data?.result
-    || data?.data
-    || [];
+  if (optionTokens.length === 0) {
+    return { chain: [], totalCallOI: 0, totalPutOI: 0 };
+  }
 
-  const optionList = Array.isArray(options) ? options : [];
+  // Fetch quotes in batches of 20 (SDK limitation)
+  const BATCH_SIZE = 20;
+  for (let i = 0; i < optionTokens.length; i += BATCH_SIZE) {
+    const batch = optionTokens.slice(i, i + BATCH_SIZE);
+    const instrumentTokens = batch.map(t => ({
+      instrument_token: t.instrument_token,
+      exchange_segment: t.exchange_segment,
+    }));
 
-  for (const opt of optionList) {
-    const strike = parseFloat(opt.strikePrice || opt.strike_price || opt.strike || "0");
-    if (strike <= 0) continue;
+    try {
+      const quotesData = await fetchQuotes(baseUrl, consumerKey, instrumentTokens, "all");
+      if (quotesData?.__error) return { chain: [], totalCallOI: 0, totalPutOI: 0 };
 
-    // Filter to strike range
-    if (Math.abs(strike - atmStrike) > strikeRange * 50) continue;
+      // Parse quotes response — SDK returns { message: [...] }
+      const quotesList = quotesData?.message || quotesData?.data || quotesData?.result || [];
+      const quotesArray = Array.isArray(quotesList) ? quotesList : [quotesList];
 
-    if (!strikeMap.has(strike)) {
-      strikeMap.set(strike, {
-        strike,
-        callLTP: 0, putLTP: 0, callOI: 0, putOI: 0,
-        callOIChange: 0, putOIChange: 0, callVolume: 0, putVolume: 0,
-        callBid: 0, callAsk: 0, putBid: 0, putAsk: 0,
-        isATM: strike === atmStrike,
-      });
-    }
+      for (let j = 0; j < batch.length && j < quotesArray.length; j++) {
+        const quote = quotesArray[j];
+        const tokenInfo = batch[j];
+        const strike = tokenInfo.strike;
 
-    const row = strikeMap.get(strike)!;
+        if (!strikeMap.has(strike)) {
+          strikeMap.set(strike, {
+            strike,
+            callLTP: 0, putLTP: 0, callOI: 0, putOI: 0,
+            callOIChange: 0, putOIChange: 0, callVolume: 0, putVolume: 0,
+            callBid: 0, callAsk: 0, putBid: 0, putAsk: 0,
+            isATM: strike === atmStrike,
+          });
+        }
 
-    // CE data
-    const ce = opt.CE || opt.ce || opt.callOption || opt.call;
-    if (ce) {
-      row.callLTP = parseFloat(ce.lastTradedPrice || ce.ltp || ce.last_traded_price || "0");
-      row.callOI = parseInt(ce.openInterest || ce.oi || ce.open_interest || "0", 10);
-      row.callOIChange = parseInt(ce.changeInOpenInterest || ce.change_in_oi || "0", 10);
-      row.callVolume = parseInt(ce.totalTradedVolume || ce.volume || ce.v || "0", 10);
-      row.callBid = parseFloat(ce.bidPrice || ce.bp || ce.buy_price || "0");
-      row.callAsk = parseFloat(ce.askPrice || ce.sp || ce.sell_price || "0");
-      totalCallOI += row.callOI;
-    }
+        const row = strikeMap.get(strike)!;
+        const ltp = parseFloat(quote?.last_traded_price || quote?.ltp || quote?.LastTradedPrice || "0");
+        const oi = parseInt(quote?.open_interest || quote?.oi || quote?.openInterest || "0", 10);
+        const oiChange = parseInt(quote?.change_in_oi || quote?.changeInOpenInterest || "0", 10);
+        const vol = parseInt(quote?.volume || quote?.totalTradedVolume || "0", 10);
+        const bid = parseFloat(quote?.best_bid_price || quote?.bidPrice || quote?.bp || "0");
+        const ask = parseFloat(quote?.best_ask_price || quote?.askPrice || quote?.sp || "0");
 
-    // PE data
-    const pe = opt.PE || opt.pe || opt.putOption || opt.put;
-    if (pe) {
-      row.putLTP = parseFloat(pe.lastTradedPrice || pe.ltp || pe.last_traded_price || "0");
-      row.putOI = parseInt(pe.openInterest || pe.oi || pe.open_interest || "0", 10);
-      row.putOIChange = parseInt(pe.changeInOpenInterest || pe.change_in_oi || "0", 10);
-      row.putVolume = parseInt(pe.totalTradedVolume || pe.volume || pe.v || "0", 10);
-      row.putBid = parseFloat(pe.bidPrice || pe.bp || pe.buy_price || "0");
-      row.putAsk = parseFloat(pe.askPrice || pe.sp || pe.sell_price || "0");
-      totalPutOI += row.putOI;
+        if (tokenInfo.optionType === "CE") {
+          row.callLTP = ltp;
+          row.callOI = oi;
+          row.callOIChange = oiChange;
+          row.callVolume = vol;
+          row.callBid = bid;
+          row.callAsk = ask;
+          totalCallOI += oi;
+        } else {
+          row.putLTP = ltp;
+          row.putOI = oi;
+          row.putOIChange = oiChange;
+          row.putVolume = vol;
+          row.putBid = bid;
+          row.putAsk = ask;
+          totalPutOI += oi;
+        }
+      }
+    } catch (err: any) {
+      console.error(`[OptionChain] Batch quote error: ${err.message}`);
     }
   }
 
@@ -188,6 +308,7 @@ function buildChainFromResponse(data: any, atmStrike: number, strikeRange: numbe
   return { chain, totalCallOI, totalPutOI };
 }
 
+// ─── Main Handler ────────────────────────────────────────────────────
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -227,7 +348,7 @@ Deno.serve(async (req) => {
       .limit(1)
       .maybeSingle();
 
-    if (!session?.access_token) {
+    if (!session?.access_token || !session?.consumer_key) {
       return new Response(
         JSON.stringify({ success: false, error: "Broker not connected — please login first", code: "NO_SESSION" }),
         { status: 200, headers }
@@ -246,51 +367,50 @@ Deno.serve(async (req) => {
 
     const body = await req.json();
     const { strikeRange = 10 } = body;
-    const accessToken = session.access_token;
 
-    // Step 1: Fetch NIFTY spot price via quotes API
-    const niftyInstrumentToken = "26000"; // NIFTY 50 index token
-    console.log("Fetching NIFTY spot quote...");
+    // Use base_url from session (set during login) or fallback
+    const baseUrl = (session.base_url || FALLBACK_BASE).replace(/\/$/, "");
+    const consumerKey = session.consumer_key;
 
+    console.log(`[MarketData] Using base URL: ${baseUrl}`);
+    console.log(`[MarketData] Consumer key present: ${!!consumerKey}`);
+
+    // ─── Step 1: Fetch NIFTY spot via quotes API ─────────────────
     let niftySpot = 0;
     let niftyChange = 0;
 
     try {
-      const quoteData = await fetchQuote(accessToken, niftyInstrumentToken);
+      const niftyQuote = await fetchQuotes(
+        baseUrl,
+        consumerKey,
+        [{ instrument_token: "26000", exchange_segment: "nse_cm" }],
+        "ltp"
+      );
 
-      if (quoteData?.__error === "SESSION_EXPIRED") {
+      if (niftyQuote?.__error === "SESSION_EXPIRED") {
         await adminClient.from("broker_sessions")
           .update({ is_active: false, updated_at: new Date().toISOString() })
           .eq("id", session.id);
         return new Response(
-          JSON.stringify({ success: false, error: quoteData.__message, code: "SESSION_EXPIRED" }),
+          JSON.stringify({ success: false, error: niftyQuote.__message, code: "SESSION_EXPIRED" }),
           { status: 200, headers }
         );
       }
 
-      // Extract spot from various response structures
-      const quote = quoteData?.result?.listQuotes?.[0]
-        || quoteData?.data?.listQuotes?.[0]
-        || quoteData?.result?.[0]
-        || quoteData?.data?.[0]
-        || quoteData?.result
-        || quoteData?.data
-        || quoteData;
-
-      console.log("Quote data structure:", JSON.stringify(quote).substring(0, 500));
+      // SDK response format: { message: [{ last_traded_price: "...", ... }] }
+      const quoteMsg = niftyQuote?.message?.[0] || niftyQuote?.data?.[0] || niftyQuote;
+      console.log("[Quotes] NIFTY quote response:", JSON.stringify(quoteMsg).substring(0, 500));
 
       niftySpot = parseFloat(
-        quote?.lastTradedPrice || quote?.ltp || quote?.last_traded_price
-        || quote?.LastTradedPrice || quote?.LTP || "0"
+        quoteMsg?.last_traded_price || quoteMsg?.ltp || quoteMsg?.LastTradedPrice || "0"
       );
       niftyChange = parseFloat(
-        quote?.percentChange || quote?.change || quote?.netChange
-        || quote?.PercentChange || quote?.Change || "0"
+        quoteMsg?.percentage_change || quoteMsg?.change || quoteMsg?.percentChange || "0"
       );
 
-      console.log(`NIFTY spot: ${niftySpot}, change: ${niftyChange}`);
+      console.log(`[MarketData] NIFTY spot: ${niftySpot}, change: ${niftyChange}`);
     } catch (err: any) {
-      console.error("Spot price fetch failed:", err.message);
+      console.error(`[MarketData] Spot price fetch failed: ${err.message}`);
       return new Response(
         JSON.stringify({ success: false, error: `Kotak API unavailable: ${err.message}`, code: "KOTAK_API_ERROR" }),
         { status: 200, headers }
@@ -308,37 +428,38 @@ Deno.serve(async (req) => {
       }), { headers });
     }
 
-    // Step 2: Fetch option chain via dedicated API
+    // ─── Step 2: Build option chain ──────────────────────────────
     const atmStrike = Math.round(niftySpot / 50) * 50;
     let niftyChain: any[] = [];
     let totalCallOI = 0;
     let totalPutOI = 0;
 
     try {
-      console.log("Fetching NIFTY option chain...");
-      const chainData = await fetchOptionChain(accessToken, niftyInstrumentToken, strikeRange, atmStrike);
+      console.log(`[MarketData] Building option chain, ATM: ${atmStrike}, range: ${strikeRange}`);
 
-      if (chainData?.__error === "SESSION_EXPIRED") {
-        await adminClient.from("broker_sessions")
-          .update({ is_active: false, updated_at: new Date().toISOString() })
-          .eq("id", session.id);
-        return new Response(
-          JSON.stringify({ success: false, error: chainData.__message, code: "SESSION_EXPIRED" }),
-          { status: 200, headers }
-        );
+      // Fetch NIFTY option instrument tokens from scrip master
+      const optionTokens = await fetchNiftyOptionTokens(baseUrl, consumerKey, atmStrike, strikeRange);
+
+      if (optionTokens.length > 0) {
+        const result = await buildOptionChain(baseUrl, consumerKey, optionTokens, atmStrike);
+        niftyChain = result.chain;
+        totalCallOI = result.totalCallOI;
+        totalPutOI = result.totalPutOI;
+        console.log(`[MarketData] Option chain: ${niftyChain.length} strikes, callOI: ${totalCallOI}, putOI: ${totalPutOI}`);
+      } else {
+        console.log("[MarketData] No option tokens found, building empty chain");
+        for (let i = -strikeRange; i <= strikeRange; i++) {
+          const strike = atmStrike + i * 50;
+          niftyChain.push({
+            strike, callLTP: 0, putLTP: 0, callOI: 0, putOI: 0,
+            callOIChange: 0, putOIChange: 0, callVolume: 0, putVolume: 0,
+            callBid: 0, callAsk: 0, putBid: 0, putAsk: 0,
+            isATM: strike === atmStrike,
+          });
+        }
       }
-
-      console.log("OptionChain raw response:", JSON.stringify(chainData).substring(0, 1000));
-
-      const result = buildChainFromResponse(chainData, atmStrike, strikeRange);
-      niftyChain = result.chain;
-      totalCallOI = result.totalCallOI;
-      totalPutOI = result.totalPutOI;
-
-      console.log(`Built option chain: ${niftyChain.length} strikes, callOI: ${totalCallOI}, putOI: ${totalPutOI}`);
     } catch (err: any) {
-      console.error("Option chain fetch failed:", err.message);
-      // Build empty chain shell so UI doesn't break
+      console.error(`[MarketData] Option chain error: ${err.message}`);
       for (let i = -strikeRange; i <= strikeRange; i++) {
         const strike = atmStrike + i * 50;
         niftyChain.push({
