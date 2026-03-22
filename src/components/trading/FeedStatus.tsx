@@ -1,4 +1,4 @@
-import { Wifi, WifiOff, AlertTriangle, Unplug } from 'lucide-react';
+import { Wifi, WifiOff, AlertTriangle, Unplug, Clock } from 'lucide-react';
 import type { FeedHealth } from '@/services/kotakMarketFeed';
 
 interface FeedStatusProps {
@@ -6,7 +6,7 @@ interface FeedStatusProps {
 }
 
 export function FeedStatus({ health }: FeedStatusProps) {
-  const { status, latencyMs, lastTickTime, errorMessage } = health;
+  const { status, latencyMs, lastTickTime, errorMessage, isStale } = health;
 
   const lastTickLabel = lastTickTime
     ? new Date(lastTickTime).toLocaleTimeString('en-IN', { hour12: false })
@@ -19,6 +19,12 @@ export function FeedStatus({ health }: FeedStatusProps) {
           <>
             <Wifi className="w-3 h-3 text-profit" />
             <span className="status-dot status-connected" />
+          </>
+        )}
+        {status === 'stale' && (
+          <>
+            <Clock className="w-3 h-3 text-warning animate-pulse" />
+            <span className="status-dot bg-warning shadow-[0_0_6px_hsl(var(--warning)/0.6)]" />
           </>
         )}
         {status === 'reconnecting' && (
@@ -48,6 +54,11 @@ export function FeedStatus({ health }: FeedStatusProps) {
             <span className="text-foreground/50">|</span>
             <span>{lastTickLabel}</span>
           </>
+        )}
+        {status === 'stale' && (
+          <span className="text-warning">
+            ⚠ Using last known data ({lastTickLabel})
+          </span>
         )}
         {status === 'reconnecting' && <span className="text-warning">Reconnecting…</span>}
         {status === 'broker_disconnected' && <span className="text-warning">Broker not connected</span>}
