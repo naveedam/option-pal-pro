@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
 interface BrokerConnectionState {
@@ -15,6 +15,8 @@ export function useBrokerConnection() {
     expiresAt: null,
     loading: true,
   });
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   const checkStatus = useCallback(async () => {
     try {
@@ -30,13 +32,17 @@ export function useBrokerConnection() {
 
       if (error) throw error;
 
+      const connected = data?.connected || false;
+      console.log(`[BrokerConnection] Status check: connected=${connected}, connectedAt=${data?.connectedAt}, expiresAt=${data?.expiresAt}`);
+
       setState({
-        isConnected: data?.connected || false,
+        isConnected: connected,
         connectedAt: data?.connectedAt || null,
         expiresAt: data?.expiresAt || null,
         loading: false,
       });
-    } catch {
+    } catch (err) {
+      console.error('[BrokerConnection] Status check failed:', err);
       setState(prev => ({ ...prev, loading: false }));
     }
   }, []);
@@ -54,7 +60,6 @@ export function useBrokerConnection() {
 
   useEffect(() => {
     checkStatus();
-    // Re-check every 5 minutes
     const interval = setInterval(checkStatus, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [checkStatus]);
