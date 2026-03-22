@@ -47,27 +47,45 @@ function buildHeaders(accessToken: string): Record<string, string> {
   };
 }
 
-// ─── Kotak POST-based Quote API ──────────────────────────────────────
-async function fetchQuote(accessToken: string, instrumentToken: string): Promise<any> {
-  const url = `${KOTAK_API_BASE}/apimarketdata/instruments/quotes`;
-  const res = await fetchWithRetry(url, {
-    method: "POST",
-    headers: buildHeaders(accessToken),
-    body: JSON.stringify({ instrumentToken }),
-  }, 3, 1000);
+// ─── Kotak POST-based Quote API with endpoint fallback ───────────────
+const QUOTE_ENDPOINTS = [
+  "/apimarketdata/instruments/quote",
+  "/apimarketdata/quote",
+  "/apimarketdata/instruments/quotes",
+];
 
-  if (!res.ok) {
-    const text = await res.text();
-    console.error(`Quote API error ${res.status}: ${text.substring(0, 500)}`);
-    if (res.status === 401) {
-      return { __error: "SESSION_EXPIRED", __message: "Session expired — please reconnect broker" };
+async function fetchQuote(accessToken: string, instrumentToken: string): Promise<any> {
+  for (const endpoint of QUOTE_ENDPOINTS) {
+    const url = `${KOTAK_API_BASE}${endpoint}`;
+    console.log(`[Quote] Trying: POST ${url}`);
+
+    const res = await fetchWithRetry(url, {
+      method: "POST",
+      headers: buildHeaders(accessToken),
+      body: JSON.stringify({ instrumentToken }),
+    }, 2, 1000);
+
+    if (res.status === 404) {
+      const text = await res.text();
+      console.log(`[Quote] 404 on ${endpoint}, trying next. Body: ${text.substring(0, 200)}`);
+      continue;
     }
-    throw new Error(`Kotak Quote API error (${res.status}): ${text.substring(0, 200)}`);
+
+    if (!res.ok) {
+      const text = await res.text();
+      console.error(`[Quote] Error ${res.status} on ${endpoint}: ${text.substring(0, 500)}`);
+      if (res.status === 401) {
+        return { __error: "SESSION_EXPIRED", __message: "Session expired — please reconnect broker" };
+      }
+      throw new Error(`Kotak Quote API error (${res.status}): ${text.substring(0, 200)}`);
+    }
+
+    const data = await res.json();
+    console.log(`[Quote] Success on ${endpoint} for ${instrumentToken}: keys=${Object.keys(data).join(",")}`);
+    return data;
   }
 
-  const data = await res.json();
-  console.log(`Quote response for ${instrumentToken}: keys=${Object.keys(data).join(",")}`);
-  return data;
+  throw new Error("All quote endpoints returned 404 — Kotak API may have changed");
 }
 
 // ─── Kotak POST-based Option Chain API ───────────────────────────────
