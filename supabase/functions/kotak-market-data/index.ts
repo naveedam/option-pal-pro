@@ -6,7 +6,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const KOTAK_API_BASE = "https://api.kotaksecurities.com";
+const KOTAK_API_BASE = "https://gw-napi.kotaksecurities.com";
 
 // ─── Retry with backoff (handles 503) ─────────────────────────────────
 async function fetchWithRetry(
