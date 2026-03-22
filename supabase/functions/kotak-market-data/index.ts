@@ -6,10 +6,8 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// SDK v2: baseUrl is returned dynamically from MPIN validation
-// Fallback to gw-napi if no baseUrl stored
 const KOTAK_FALLBACK_BASE = "https://gw-napi.kotaksecurities.com";
-const EXPIRY_OFFSET_SECONDS = 315511200; // ~10 year offset in scrip master CSV
+const EXPIRY_OFFSET_SECONDS = 315511200;
 
 interface OptionToken {
   token: string;
@@ -19,17 +17,41 @@ interface OptionToken {
   tradingSymbol: string;
 }
 
-// In-memory cache for scrip master (persists across requests in same isolate)
 let cachedNiftyOptions: OptionToken[] = [];
 let cachedDate: string | null = null;
 
-/**
- * SDK v2 header format for data APIs (per migration guide):
- * - Authorization: {consumer_key}  (NO Bearer prefix!)
- * The migration guide also says to use the token from login, not consumer key,
- * for quotes. We try consumer_key first (old pattern), fall back to access_token.
- */
-function buildDataHeaders(session: { consumer_key: string; access_token: string; session_token: string }): Record<string, string> {
+// ─── Retry with backoff (handles 503) ─────────────────────────────────
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxRetries = 3,
+  baseDelay = 500,
+): Promise<Response> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetch(url, options);
+      // Retry on 503 (server unavailable) and 502/504 (gateway errors)
+      if ([502, 503, 504, 522].includes(res.status) && attempt < maxRetries) {
+        const delay = baseDelay * Math.pow(2, attempt);
+        console.log(`[Retry] ${res.status} on attempt ${attempt + 1}, waiting ${delay}ms...`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      return res;
+    } catch (err: any) {
+      lastError = err;
+      if (attempt < maxRetries) {
+        const delay = baseDelay * Math.pow(2, attempt);
+        console.log(`[Retry] Network error on attempt ${attempt + 1}: ${err.message}, waiting ${delay}ms...`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastError || new Error("Max retries exceeded");
+}
+
+function buildDataHeaders(session: { access_token: string; session_token: string }): Record<string, string> {
   return {
     "Authorization": session.access_token,
     "neo-fin-key": "neotradeapi",
@@ -38,10 +60,9 @@ function buildDataHeaders(session: { consumer_key: string; access_token: string;
 }
 
 async function fetchScripMaster(baseUrl: string, session: any): Promise<string[]> {
-  // Per migration guide: {{baseUrl}}/scriptdetails/1.0/masterscrip/file-paths
   const url = `${baseUrl}/scriptdetails/1.0/masterscrip/file-paths`;
   console.log("Fetching scrip master file paths from:", url);
-  const res = await fetch(url, { method: "GET", headers: buildDataHeaders(session) });
+  const res = await fetchWithRetry(url, { method: "GET", headers: buildDataHeaders(session) }, 2, 1000);
   if (!res.ok) {
     const text = await res.text();
     console.error("Scrip master file-paths failed:", res.status, text.substring(0, 500));
@@ -91,9 +112,6 @@ async function fetchAndParseNiftyOptions(baseUrl: string, session: any, spotPric
   const expiryIdx = headers.indexOf("pexpirydate");
   const optTypeIdx = headers.indexOf("poptiontype");
   const strikeIdx = headers.findIndex(h => h.startsWith("dstrikeprice"));
-  const instTypeIdx = headers.indexOf("pinsttype") !== -1 ? headers.indexOf("pinsttype") : -1;
-
-  console.log("CSV headers found:", { symbolIdx, tokenIdx, expiryIdx, optTypeIdx, strikeIdx, instTypeIdx });
 
   if (tokenIdx === -1 || expiryIdx === -1 || optTypeIdx === -1 || strikeIdx === -1) {
     console.error("CSV header mapping failed. Headers:", headers.slice(0, 20).join(", "));
@@ -122,15 +140,13 @@ async function fetchAndParseNiftyOptions(baseUrl: string, session: any, spotPric
 
     const rawStrike = parseFloat(cols[strikeIdx] || "0");
     const strike = rawStrike / 100;
-
     if (strike <= 0) continue;
 
     const token = (cols[tokenIdx] || "").trim();
     if (!token) continue;
 
     allNiftyOptions.push({
-      token,
-      strike,
+      token, strike,
       optionType: optType as "CE" | "PE",
       expiry: expiryDate.toISOString().split("T")[0],
       tradingSymbol: `NIFTY_${expiryDate.getDate()}${(expiryDate.getMonth() + 1).toString().padStart(2, "0")}_${strike}_${optType}`,
@@ -138,7 +154,6 @@ async function fetchAndParseNiftyOptions(baseUrl: string, session: any, spotPric
   }
 
   console.log(`Parsed ${allNiftyOptions.length} NIFTY option contracts`);
-
   cachedNiftyOptions = allNiftyOptions;
   cachedDate = today;
 
@@ -150,16 +165,12 @@ function filterByStrikeRange(options: OptionToken[], spotPrice: number, strikeRa
   const nearestExpiry = expiries[0];
   if (!nearestExpiry) return [];
 
-  console.log(`Nearest expiry: ${nearestExpiry}, total expiries: ${expiries.length}`);
-
   const expiryOptions = options.filter(o => o.expiry === nearestExpiry);
   const atmStrike = Math.round(spotPrice / 50) * 50;
   const minStrike = atmStrike - strikeRange * 50;
   const maxStrike = atmStrike + strikeRange * 50;
 
-  const filtered = expiryOptions.filter(o => o.strike >= minStrike && o.strike <= maxStrike);
-  console.log(`ATM: ${atmStrike}, range: ${minStrike}-${maxStrike}, filtered: ${filtered.length} contracts`);
-  return filtered;
+  return expiryOptions.filter(o => o.strike >= minStrike && o.strike <= maxStrike);
 }
 
 async function fetchQuotes(
@@ -169,9 +180,7 @@ async function fetchQuotes(
   indexToken: string
 ): Promise<Record<string, any>> {
   const symbols = [`nse_cm|${indexToken}`];
-  for (const t of tokens) {
-    symbols.push(`nse_fo|${t.token}`);
-  }
+  for (const t of tokens) symbols.push(`nse_fo|${t.token}`);
 
   const batchSize = 25;
   const allQuotes: Record<string, any> = {};
@@ -179,28 +188,35 @@ async function fetchQuotes(
   for (let i = 0; i < symbols.length; i += batchSize) {
     const batch = symbols.slice(i, i + batchSize);
     const encoded = encodeURIComponent(batch.join(","));
-    // Per migration guide: {{baseUrl}}/scriptdetails/1.0/quotes/
     const url = `${baseUrl}/scriptdetails/1.0/quotes/neosymbol/${encoded}/all`;
 
     console.log(`Fetching quotes batch ${Math.floor(i / batchSize) + 1}: ${batch.length} symbols`);
-    const res = await fetch(url, { method: "GET", headers: buildDataHeaders(session) });
 
-    if (!res.ok) {
-      const text = await res.text();
-      console.error(`Quotes batch failed (${res.status}):`, text.substring(0, 500));
-      if (res.status === 401) {
-        return { __error: "SESSION_EXPIRED", __message: "Session expired — please reconnect broker" };
+    try {
+      const res = await fetchWithRetry(url, { method: "GET", headers: buildDataHeaders(session) }, 2, 500);
+
+      if (!res.ok) {
+        const text = await res.text();
+        console.error(`Quotes batch failed (${res.status}):`, text.substring(0, 300));
+        if (res.status === 401) {
+          return { __error: "SESSION_EXPIRED", __message: "Session expired — please reconnect broker" };
+        }
+        // Skip batch but don't fail entire chain
+        continue;
       }
+
+      const data = await res.json();
+      const quotes = Array.isArray(data) ? data : (data?.data || data?.message || []);
+      if (Array.isArray(quotes)) {
+        for (const q of quotes) {
+          const key = `${q.e || q.exchange_segment}|${q.tk || q.instrument_token}`;
+          allQuotes[key] = q;
+        }
+      }
+    } catch (err: any) {
+      console.error(`Quotes batch ${Math.floor(i / batchSize) + 1} error:`, err.message);
+      // Skip batch, continue with others
       continue;
-    }
-
-    const data = await res.json();
-    const quotes = Array.isArray(data) ? data : (data?.data || data?.message || []);
-    if (Array.isArray(quotes)) {
-      for (const q of quotes) {
-        const key = `${q.e || q.exchange_segment}|${q.tk || q.instrument_token}`;
-        allQuotes[key] = q;
-      }
     }
   }
 
@@ -266,17 +282,26 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const { strikeRange = 10 } = body;
 
-    // Use the dynamic baseUrl from MPIN validation, or fallback
     const baseUrl = session.base_url || KOTAK_FALLBACK_BASE;
     console.log("Using baseUrl:", baseUrl);
 
-    // Step 1: Fetch NIFTY spot price
+    // Step 1: Fetch NIFTY spot price (with retry)
     const niftyIndexToken = "26000";
     const spotEncoded = encodeURIComponent(`nse_cm|${niftyIndexToken}`);
     const spotUrl = `${baseUrl}/scriptdetails/1.0/quotes/neosymbol/${spotEncoded}/ltp`;
 
     console.log("Fetching NIFTY spot price from:", spotUrl);
-    const spotRes = await fetch(spotUrl, { method: "GET", headers: buildDataHeaders(session) });
+
+    let spotRes: Response;
+    try {
+      spotRes = await fetchWithRetry(spotUrl, { method: "GET", headers: buildDataHeaders(session) }, 3, 1000);
+    } catch (err: any) {
+      console.error("Spot price fetch failed after retries:", err.message);
+      return new Response(
+        JSON.stringify({ success: false, error: `Kotak API unavailable: ${err.message}`, code: "KOTAK_API_ERROR" }),
+        { status: 200, headers }
+      );
+    }
 
     if (!spotRes.ok) {
       const spotText = await spotRes.text();
@@ -369,19 +394,11 @@ Deno.serve(async (req) => {
           const sp_val = parseFloat(quote.sp || quote.sell_price || "0");
 
           if (opt.optionType === "CE") {
-            row.callLTP = ltp;
-            row.callOI = oi;
-            row.callVolume = vol;
-            row.callBid = bp;
-            row.callAsk = sp_val;
-            totalCallOI += oi;
+            row.callLTP = ltp; row.callOI = oi; row.callVolume = vol;
+            row.callBid = bp; row.callAsk = sp_val; totalCallOI += oi;
           } else {
-            row.putLTP = ltp;
-            row.putOI = oi;
-            row.putVolume = vol;
-            row.putBid = bp;
-            row.putAsk = sp_val;
-            totalPutOI += oi;
+            row.putLTP = ltp; row.putOI = oi; row.putVolume = vol;
+            row.putBid = bp; row.putAsk = sp_val; totalPutOI += oi;
           }
         }
       }
@@ -402,21 +419,14 @@ Deno.serve(async (req) => {
 
     const niftyPCR = totalCallOI > 0 ? Math.round((totalPutOI / totalCallOI) * 100) / 100 : 0;
 
-    const result = {
-      niftySpot,
-      sensexSpot: 0,
-      niftyChange,
-      sensexChange: 0,
-      niftyPCR,
-      sensexPCR: 0,
-      niftyATM: atmStrike,
-      sensexATM: 0,
-      niftyChain,
-      sensexChain: [],
-      timestamp: Date.now(),
-    };
-
-    return new Response(JSON.stringify({ success: true, data: result }), { headers });
+    return new Response(JSON.stringify({
+      success: true,
+      data: {
+        niftySpot, sensexSpot: 0, niftyChange, sensexChange: 0,
+        niftyPCR, sensexPCR: 0, niftyATM: atmStrike, sensexATM: 0,
+        niftyChain, sensexChain: [], timestamp: Date.now(),
+      }
+    }), { headers });
 
   } catch (error) {
     console.error("Market data error:", error);
