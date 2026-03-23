@@ -202,6 +202,7 @@ export class MarketDataProvider {
 
           if (!data?.success) {
             const code = data?.code;
+            console.log('[MarketDataProvider] API failure', { code, error: data?.error });
             // Session-level errors — don't retry
             if (code === 'NO_SESSION' || code === 'SESSION_EXPIRED') {
               const sessionError = new Error(data?.error || 'Session expired') as any;
@@ -229,6 +230,12 @@ export class MarketDataProvider {
       return { data: result, isStale: false, lastFreshAt: this.lastFreshTimestamp };
 
     } catch (err: any) {
+      console.log('[MarketDataProvider] Request failed', {
+        message: err.message,
+        code: err.code,
+        isSessionError: !!err.isSessionError,
+      });
+
       // Session errors: don't circuit-break, propagate directly
       if (err.isSessionError) {
         return this.buildStaleResult(err.message, err.code);

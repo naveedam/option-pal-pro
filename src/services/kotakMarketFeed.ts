@@ -1,7 +1,7 @@
 import { marketDataProvider } from '@/services/marketDataProvider';
 import type { MarketData } from '@/hooks/useMarketData';
 
-export type FeedStatus = 'connected' | 'disconnected' | 'reconnecting' | 'error' | 'broker_disconnected' | 'stale';
+export type FeedStatus = 'connected' | 'disconnected' | 'reconnecting' | 'error' | 'stale';
 
 export interface FeedHealth {
   status: FeedStatus;
@@ -56,19 +56,8 @@ export class KotakMarketFeed {
 
     const latency = Date.now() - startTime;
 
-    // Check for session errors
     if (result.error) {
-      const isSession = result.error.includes('expired') || result.error.includes('not connected');
-      if (isSession) {
-        this.stopPolling();
-        this.updateHealth({
-          status: 'broker_disconnected',
-          errorMessage: result.error,
-          consecutiveErrors: 0,
-          isStale: false,
-        });
-        return;
-      }
+      console.log('[KotakMarketFeed] Feed response error', { error: result.error });
     }
 
     // We got data (fresh or stale)

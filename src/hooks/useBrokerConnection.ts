@@ -15,7 +15,7 @@ export function useBrokerConnection() {
   stateRef.current = state;
 
   const validateMarketData = useCallback(async () => {
-    let lastError = 'Market feed unavailable';
+    let lastError = 'MARKET_DATA_UNAVAILABLE';
 
     for (let retry = 0; retry <= MAX_MARKET_VALIDATION_RETRIES; retry++) {
       try {
@@ -29,6 +29,14 @@ export function useBrokerConnection() {
 
         const { data, error } = await supabase.functions.invoke('kotak-market-data', {
           body: { validateOnly: true, symbol: 'NIFTY' },
+        });
+
+        console.log('[BrokerConnection] Validation API response', {
+          auth: stateRef.current.auth,
+          marketData: stateRef.current.marketData,
+          success: data?.success,
+          error: data?.error,
+          code: data?.code,
         });
 
         if (error) throw new Error(error.message || 'Market validation failed');
@@ -48,10 +56,10 @@ export function useBrokerConnection() {
           return { marketData: 'connected' as const, marketDataError: null, validationAttempts: retry };
         }
 
-        lastError = data?.error || data?.validation?.error || 'Market feed unavailable';
+        lastError = data?.error || data?.validation?.error || 'MARKET_DATA_UNAVAILABLE';
         console.log(`[BrokerConnection] Market validation result: failed attempt=${retry + 1} error=${lastError}`);
       } catch (err: any) {
-        lastError = err.message || 'Market feed unavailable';
+        lastError = err.message || 'MARKET_DATA_UNAVAILABLE';
         console.log(`[BrokerConnection] Market validation result: failed attempt=${retry + 1} error=${lastError}`);
       }
     }
@@ -99,7 +107,7 @@ export function useBrokerConnection() {
       };
 
       console.log(
-        `[BrokerConnection] Status check: reason=${reason} auth=${auth} trading=${trading} connectedAt=${data?.connectedAt} expiresAt=${data?.expiresAt}`,
+        `[BrokerConnection] Status check: reason=${reason} auth=${auth} marketData=${stateRef.current.marketData} trading=${trading} connectedAt=${data?.connectedAt} expiresAt=${data?.expiresAt}`,
       );
 
       setState(nextState);
@@ -153,6 +161,8 @@ export function useBrokerConnection() {
   return {
     ...state,
     isConnected: state.auth === 'connected' && state.marketData === 'connected',
+    isAuthenticated: state.auth === 'connected',
+    isMarketDataAvailable: state.marketData === 'connected',
     refresh: checkStatus,
     retryMarketValidation,
     disconnect,
