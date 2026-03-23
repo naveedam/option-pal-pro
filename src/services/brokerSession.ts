@@ -6,6 +6,11 @@ export type BrokerState = {
   trading: BrokerConnectionState;
 };
 
+export type BrokerStatus = {
+  isAuthenticated: boolean;
+  isMarketDataAvailable: boolean;
+};
+
 export type BrokerSessionState = BrokerState & {
   connectedAt: string | null;
   expiresAt: string | null;
@@ -33,3 +38,8 @@ export const isMarketDataConnected = (state: BrokerState) => state.marketData ==
 
 export const isBrokerFullyConnected = (state: BrokerState) =>
   state.auth === 'connected' && state.marketData === 'connected';
+
+export const toBrokerStatus = (state: BrokerState): BrokerStatus => ({
+  isAuthenticated: state.auth === 'connected',
+  isMarketDataAvailable: state.marketData === 'connected',
+});
