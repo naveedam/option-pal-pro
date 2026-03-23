@@ -349,8 +349,9 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (!session?.access_token || !session?.consumer_key) {
+      console.log(`[MarketData] auth=connected session_missing_credentials user=${user.id}`);
       return new Response(
-        JSON.stringify({ success: false, error: "Broker not connected — please login first", code: "NO_SESSION" }),
+        JSON.stringify({ success: false, error: "MARKET_DATA_UNAVAILABLE", code: "MARKET_DATA_UNAVAILABLE" }),
         { status: 200, headers }
       );
     }
@@ -360,7 +361,7 @@ Deno.serve(async (req) => {
         .update({ is_active: false, updated_at: new Date().toISOString() })
         .eq("id", session.id);
       return new Response(
-        JSON.stringify({ success: false, error: "Session expired — please reconnect broker", code: "SESSION_EXPIRED" }),
+        JSON.stringify({ success: false, error: "SESSION_EXPIRED", code: "SESSION_EXPIRED" }),
         { status: 200, headers }
       );
     }
@@ -393,7 +394,7 @@ Deno.serve(async (req) => {
           .update({ is_active: false, updated_at: new Date().toISOString() })
           .eq("id", session.id);
         return new Response(
-          JSON.stringify({ success: false, error: niftyQuote.__message, code: "SESSION_EXPIRED" }),
+          JSON.stringify({ success: false, error: "SESSION_EXPIRED", code: "SESSION_EXPIRED" }),
           { status: 200, headers }
         );
       }
@@ -414,7 +415,7 @@ Deno.serve(async (req) => {
       console.log(`[MarketValidation] result=failed error=${err.message}`);
       console.error(`[MarketData] Spot price fetch failed: ${err.message}`);
       return new Response(
-        JSON.stringify({ success: false, error: `Kotak API unavailable: ${err.message}`, code: "KOTAK_API_ERROR" }),
+          JSON.stringify({ success: false, error: "MARKET_DATA_UNAVAILABLE", code: "MARKET_DATA_UNAVAILABLE" }),
         { status: 200, headers }
       );
     }
@@ -432,9 +433,9 @@ Deno.serve(async (req) => {
             trading: "connected",
             symbol,
             quote: niftySpot,
-            error: niftySpot > 0 ? null : "Market feed unavailable",
+             error: niftySpot > 0 ? null : "MARKET_DATA_UNAVAILABLE",
           },
-          error: niftySpot > 0 ? null : "Market feed unavailable",
+           error: niftySpot > 0 ? null : "MARKET_DATA_UNAVAILABLE",
           code: niftySpot > 0 ? "VALIDATION_OK" : "MARKET_VALIDATION_FAILED",
         }),
         { headers },
