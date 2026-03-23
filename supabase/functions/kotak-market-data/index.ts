@@ -378,6 +378,9 @@ Deno.serve(async (req) => {
     console.log(`[MarketValidation] requested=${validateOnly} symbol=${symbol}`);
 
     // ─── Step 1: Fetch NIFTY spot via quotes API ─────────────────
+    // Kotak Neo SDK requires exchange identifier strings for indices, NOT numeric tokens
+    // See: https://github.com/Kotak-Neo/kotak-neo-api/blob/main/docs/Quotes.md
+    // Index identifiers: "Nifty 50", "Nifty Bank", "SENSEX", etc.
     let niftySpot = 0;
     let niftyChange = 0;
 
@@ -385,7 +388,7 @@ Deno.serve(async (req) => {
       const niftyQuote = await fetchQuotes(
         baseUrl,
         consumerKey,
-        [{ instrument_token: "26000", exchange_segment: "nse_cm" }],
+        [{ instrument_token: "Nifty 50", exchange_segment: "nse_cm" }],
         "ltp"
       );
 
@@ -395,6 +398,16 @@ Deno.serve(async (req) => {
           .eq("id", session.id);
         return new Response(
           JSON.stringify({ success: false, error: "SESSION_EXPIRED", code: "SESSION_EXPIRED" }),
+          { status: 200, headers }
+        );
+      }
+
+      // Check for API fault response (invalid symbol, etc.)
+      if (niftyQuote?.fault) {
+        console.error(`[Quotes] NIFTY fault: ${JSON.stringify(niftyQuote.fault)}`);
+        // Return unavailable but don't crash — auth is still valid
+        return new Response(
+          JSON.stringify({ success: false, error: "MARKET_DATA_UNAVAILABLE", code: "MARKET_DATA_UNAVAILABLE", details: niftyQuote.fault }),
           { status: 200, headers }
         );
       }
