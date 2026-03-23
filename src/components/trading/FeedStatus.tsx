@@ -1,4 +1,4 @@
-import { Wifi, WifiOff, AlertTriangle, Unplug, Clock } from 'lucide-react';
+import { Wifi, WifiOff, AlertTriangle, Clock } from 'lucide-react';
 import type { FeedHealth } from '@/services/kotakMarketFeed';
 
 interface FeedStatusProps {
@@ -33,12 +33,6 @@ export function FeedStatus({ health }: FeedStatusProps) {
             <span className="status-dot bg-warning shadow-[0_0_6px_hsl(var(--warning)/0.6)]" />
           </>
         )}
-        {status === 'broker_disconnected' && (
-          <>
-            <Unplug className="w-3 h-3 text-warning" />
-            <span className="status-dot bg-warning shadow-[0_0_6px_hsl(var(--warning)/0.6)]" />
-          </>
-        )}
         {(status === 'disconnected' || status === 'error') && (
           <>
             <WifiOff className="w-3 h-3 text-loss" />
@@ -61,7 +55,6 @@ export function FeedStatus({ health }: FeedStatusProps) {
           </span>
         )}
         {status === 'reconnecting' && <span className="text-warning">Reconnecting…</span>}
-        {status === 'broker_disconnected' && <span className="text-warning">Broker not connected</span>}
         {status === 'error' && (
           <span className="text-loss truncate max-w-[180px]" title={errorMessage || undefined}>
             Feed unavailable
