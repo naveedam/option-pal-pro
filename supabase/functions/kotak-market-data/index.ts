@@ -450,9 +450,10 @@ Deno.serve(async (req) => {
       console.log(`[MarketData] Trying numeric token: ${numericMapping.token} on ${numericMapping.segment}`);
       let niftyQuote = await fetchQuotes(
         baseUrl,
-        consumerKey,
+        accessToken,
+        sid,
         [{ instrument_token: String(numericMapping.token), exchange_segment: numericMapping.segment }],
-        "ltp"
+        "LTP"
       );
 
       // If numeric token returns fault, try string fallback
@@ -460,9 +461,10 @@ Deno.serve(async (req) => {
         console.log(`[MarketData] Numeric token fault, trying string fallback: ${stringFallback}`);
         niftyQuote = await fetchQuotes(
           baseUrl,
-          consumerKey,
+          accessToken,
+          sid,
           [{ instrument_token: stringFallback, exchange_segment: numericMapping.segment }],
-          "ltp"
+          "LTP"
         );
       }
 
