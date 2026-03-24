@@ -398,7 +398,7 @@ Deno.serve(async (req) => {
       .limit(1)
       .maybeSingle();
 
-    if (!session?.access_token || !session?.consumer_key) {
+    if (!session?.access_token) {
       console.log(`[MarketData] auth=connected session_missing_credentials user=${user.id}`);
       return new Response(
         JSON.stringify({ success: false, error: "MARKET_DATA_UNAVAILABLE", code: "MARKET_DATA_UNAVAILABLE" }),
@@ -421,10 +421,11 @@ Deno.serve(async (req) => {
 
     // Use base_url from session (set during login) or fallback
     const baseUrl = (session.base_url || FALLBACK_BASE).replace(/\/$/, "");
-    const consumerKey = session.consumer_key;
+    const accessToken = session.access_token;
+    const sid = session.session_token || "";
 
     console.log(`[MarketData] Using base URL: ${baseUrl}`);
-    console.log(`[MarketData] Consumer key present: ${!!consumerKey}`);
+    console.log(`[MarketData] Access token present: ${!!accessToken}, SID present: ${!!sid}`);
     console.log(`[MarketValidation] requested=${validateOnly} symbol=${symbol}`);
 
     // ─── Step 1: Fetch NIFTY spot via quotes API ─────────────────
