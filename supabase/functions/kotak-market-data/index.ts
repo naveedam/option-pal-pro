@@ -146,14 +146,16 @@ async function fetchQuotes(
 }
 
 // ─── Fetch Scrip Master CSV file paths ───────────────────────────────
-async function fetchScripMasterPaths(baseUrl: string, consumerKey: string): Promise<any> {
+async function fetchScripMasterPaths(baseUrl: string, accessToken: string, sid: string): Promise<any> {
   const url = `${baseUrl}/${SCRIP_MASTER_PATH}`;
   console.log(`[ScripMaster] GET ${url}`);
 
   const res = await fetchWithRetry(url, {
     method: "GET",
     headers: {
-      "Authorization": consumerKey,
+      "Authorization": `Bearer ${accessToken}`,
+      "neo-fin-key": "neotradeapi",
+      "sid": sid,
     },
   }, 2, 1000);
 
@@ -169,13 +171,13 @@ async function fetchScripMasterPaths(baseUrl: string, consumerKey: string): Prom
 // ─── Download and parse scrip master CSV for NIFTY options ───────────
 async function fetchNiftyOptionTokens(
   baseUrl: string,
-  consumerKey: string,
+  accessToken: string,
+  sid: string,
   atmStrike: number,
   strikeRange: number,
 ): Promise<Array<{ instrument_token: string; exchange_segment: string; strike: number; optionType: string }>> {
   try {
-    // Get scrip master file paths
-    const pathsData = await fetchScripMasterPaths(baseUrl, consumerKey);
+    const pathsData = await fetchScripMasterPaths(baseUrl, accessToken, sid);
     console.log(`[ScripMaster] Response keys: ${JSON.stringify(Object.keys(pathsData))}`);
 
     // Find nse_fo CSV URL
@@ -279,7 +281,8 @@ async function fetchNiftyOptionTokens(
 // ─── Build option chain from batch quotes ────────────────────────────
 async function buildOptionChain(
   baseUrl: string,
-  consumerKey: string,
+  accessToken: string,
+  sid: string,
   optionTokens: Array<{ instrument_token: string; exchange_segment: string; strike: number; optionType: string }>,
   atmStrike: number,
 ): Promise<{ chain: any[]; totalCallOI: number; totalPutOI: number }> {
@@ -301,7 +304,7 @@ async function buildOptionChain(
     }));
 
     try {
-      const quotesData = await fetchQuotes(baseUrl, consumerKey, instrumentTokens, "all");
+      const quotesData = await fetchQuotes(baseUrl, accessToken, sid, instrumentTokens, "ALL");
       if (quotesData?.__error) return { chain: [], totalCallOI: 0, totalPutOI: 0 };
 
       // Parse quotes response — SDK returns { message: [...] }
@@ -552,10 +555,10 @@ Deno.serve(async (req) => {
       console.log(`[MarketData] Building option chain, ATM: ${atmStrike}, range: ${strikeRange}`);
 
       // Fetch NIFTY option instrument tokens from scrip master
-      const optionTokens = await fetchNiftyOptionTokens(baseUrl, consumerKey, atmStrike, strikeRange);
+      const optionTokens = await fetchNiftyOptionTokens(baseUrl, accessToken, sid, atmStrike, strikeRange);
 
       if (optionTokens.length > 0) {
-        const result = await buildOptionChain(baseUrl, consumerKey, optionTokens, atmStrike);
+        const result = await buildOptionChain(baseUrl, accessToken, sid, optionTokens, atmStrike);
         niftyChain = result.chain;
         totalCallOI = result.totalCallOI;
         totalPutOI = result.totalPutOI;
