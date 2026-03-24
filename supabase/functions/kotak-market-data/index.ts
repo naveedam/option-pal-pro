@@ -46,11 +46,23 @@ async function fetchWithRetry(
   throw lastError || new Error("Max retries exceeded");
 }
 
-// ─── SDK-aligned Quote Fetch (GET, not POST!) ────────────────────────
-// From SDK: quotes_neo_symbol_api.py
+// ─── Instrument Token Mapping ────────────────────────────────────────
+// Kotak APIs use numeric instrument tokens, not string names
+const INSTRUMENT_MAP: Record<string, { token: number; segment: string }> = {
+  NIFTY:     { token: 26000, segment: "nse_cm" },
+  BANKNIFTY: { token: 26009, segment: "nse_cm" },
+  SENSEX:    { token: 1,     segment: "bse_cm" },
+};
+
+// String fallbacks (some Kotak API versions accept these)
+const INSTRUMENT_STRING_MAP: Record<string, string> = {
+  NIFTY: "Nifty 50",
+  BANKNIFTY: "Nifty Bank",
+  SENSEX: "SENSEX",
+};
+
+// ─── SDK-aligned Quote Fetch (GET) ───────────────────────────────────
 // Format: exchange_segment|instrument_token (URL-encoded)
-// Auth header = consumer_key (not Bearer token)
-// Content-Type = application/x-www-form-urlencoded
 async function fetchQuotes(
   baseUrl: string,
   consumerKey: string,
@@ -378,19 +390,42 @@ Deno.serve(async (req) => {
     console.log(`[MarketValidation] requested=${validateOnly} symbol=${symbol}`);
 
     // ─── Step 1: Fetch NIFTY spot via quotes API ─────────────────
-    // Kotak Neo SDK requires exchange identifier strings for indices, NOT numeric tokens
-    // See: https://github.com/Kotak-Neo/kotak-neo-api/blob/main/docs/Quotes.md
-    // Index identifiers: "Nifty 50", "Nifty Bank", "SENSEX", etc.
+    // Try numeric token first, then string fallback
     let niftySpot = 0;
     let niftyChange = 0;
 
+    const symbolKey = symbol?.toUpperCase() || "NIFTY";
+    const numericMapping = INSTRUMENT_MAP[symbolKey];
+    const stringFallback = INSTRUMENT_STRING_MAP[symbolKey];
+
+    if (!numericMapping) {
+      console.error(`[MarketData] Unknown symbol: ${symbolKey}`);
+      return new Response(
+        JSON.stringify({ success: false, error: "INVALID_SYMBOL", code: "INVALID_SYMBOL" }),
+        { status: 200, headers }
+      );
+    }
+
     try {
-      const niftyQuote = await fetchQuotes(
+      // Attempt 1: numeric instrument token
+      console.log(`[MarketData] Trying numeric token: ${numericMapping.token} on ${numericMapping.segment}`);
+      let niftyQuote = await fetchQuotes(
         baseUrl,
         consumerKey,
-        [{ instrument_token: "Nifty 50", exchange_segment: "nse_cm" }],
+        [{ instrument_token: String(numericMapping.token), exchange_segment: numericMapping.segment }],
         "ltp"
       );
+
+      // If numeric token returns fault, try string fallback
+      if (niftyQuote?.fault && stringFallback) {
+        console.log(`[MarketData] Numeric token fault, trying string fallback: ${stringFallback}`);
+        niftyQuote = await fetchQuotes(
+          baseUrl,
+          consumerKey,
+          [{ instrument_token: stringFallback, exchange_segment: numericMapping.segment }],
+          "ltp"
+        );
+      }
 
       if (niftyQuote?.__error === "SESSION_EXPIRED") {
         await adminClient.from("broker_sessions")
