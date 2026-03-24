@@ -61,61 +61,101 @@ const INSTRUMENT_STRING_MAP: Record<string, string> = {
   SENSEX: "SENSEX",
 };
 
-// ─── SDK-aligned Quote Fetch (GET) ───────────────────────────────────
-// Format: exchange_segment|instrument_token (URL-encoded)
+// ─── Quote Fetch (POST with instrumentTokens array) ─────────────────
+// Kotak market data API expects POST with { instrumentTokens, quoteType, productType }
+// Auth: Bearer access_token + neo-fin-key + sid headers
 async function fetchQuotes(
   baseUrl: string,
-  consumerKey: string,
+  accessToken: string,
+  sid: string,
   instrumentTokens: Array<{ instrument_token: string; exchange_segment: string }>,
-  quoteType: string = "all",
+  quoteType: string = "LTP",
 ): Promise<any> {
-  // Build neo_symbol string: "nse_cm|26000,nse_fo|12345"
-  const neoSymbolStr = instrumentTokens
-    .map(t => `${t.exchange_segment}|${t.instrument_token}`)
-    .join(",");
-  const encodedSymbols = encodeURIComponent(neoSymbolStr);
+  // Build instrumentTokens array as strings: ["26000", "26009"]
+  const tokenStrings = instrumentTokens.map(t => String(t.instrument_token));
+  
+  const requestBody = {
+    instrumentTokens: tokenStrings,
+    quoteType: quoteType.toUpperCase(),
+    productType: "CASH",
+  };
 
-  const url = `${baseUrl}/${QUOTES_PATH}`
-    .replace("{neo_symbols}", encodedSymbols)
-    .replace("{quote_type}", quoteType || "all");
+  // Try multiple endpoint paths
+  const endpoints = [
+    `${baseUrl}/apimarketdata/instruments/quote`,
+    `${baseUrl}/apimarketdata/quote`,
+  ];
 
-  console.log(`[Quotes] GET ${url}`);
-  console.log(`[Quotes] Tokens: ${neoSymbolStr}`);
+  console.log(`[Quotes] Request body: ${JSON.stringify(requestBody)}`);
+  console.log(`[Quotes] Token present: ${!!accessToken}, SID present: ${!!sid}`);
 
-  const res = await fetchWithRetry(url, {
-    method: "GET",
-    headers: {
-      "Authorization": consumerKey,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-  }, 2, 1000);
+  let lastError: string = "";
 
-  if (res.status === 401 || res.status === 403) {
-    const text = await res.text();
-    console.error(`[Quotes] Auth error ${res.status}: ${text.substring(0, 300)}`);
-    return { __error: "SESSION_EXPIRED", __message: "Session expired — please reconnect broker" };
+  for (const url of endpoints) {
+    console.log(`[Quotes] POST ${url}`);
+
+    try {
+      const res = await fetchWithRetry(url, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          "neo-fin-key": "neotradeapi",
+          "sid": sid,
+        },
+        body: JSON.stringify(requestBody),
+      }, 2, 1000);
+
+      if (res.status === 401 || res.status === 403) {
+        const text = await res.text();
+        console.error(`[Quotes] Auth error ${res.status}: ${text.substring(0, 300)}`);
+        return { __error: "SESSION_EXPIRED", __message: "Session expired — please reconnect broker" };
+      }
+
+      if (res.status === 404) {
+        lastError = `404 on ${url}`;
+        console.log(`[Quotes] 404 on ${url}, trying next endpoint...`);
+        continue;
+      }
+
+      const text = await res.text();
+      console.log(`[Quotes] Response ${res.status}: ${text.substring(0, 500)}`);
+
+      if (!res.ok) {
+        lastError = `${res.status}: ${text.substring(0, 200)}`;
+        console.error(`[Quotes] Error ${res.status}: ${text.substring(0, 500)}`);
+        continue;
+      }
+
+      try {
+        const data = JSON.parse(text);
+        console.log(`[Quotes] Success, keys: ${JSON.stringify(Object.keys(data))}`);
+        return data;
+      } catch {
+        console.error(`[Quotes] Invalid JSON response: ${text.substring(0, 200)}`);
+        continue;
+      }
+    } catch (err: any) {
+      lastError = err.message;
+      console.error(`[Quotes] Network error on ${url}: ${err.message}`);
+      continue;
+    }
   }
 
-  if (!res.ok) {
-    const text = await res.text();
-    console.error(`[Quotes] Error ${res.status}: ${text.substring(0, 500)}`);
-    throw new Error(`Kotak Quotes API error (${res.status}): ${text.substring(0, 200)}`);
-  }
-
-  const data = await res.json();
-  console.log(`[Quotes] Success, keys: ${JSON.stringify(Object.keys(data))}`);
-  return data;
+  throw new Error(`All quote endpoints failed. Last error: ${lastError}`);
 }
 
 // ─── Fetch Scrip Master CSV file paths ───────────────────────────────
-async function fetchScripMasterPaths(baseUrl: string, consumerKey: string): Promise<any> {
+async function fetchScripMasterPaths(baseUrl: string, accessToken: string, sid: string): Promise<any> {
   const url = `${baseUrl}/${SCRIP_MASTER_PATH}`;
   console.log(`[ScripMaster] GET ${url}`);
 
   const res = await fetchWithRetry(url, {
     method: "GET",
     headers: {
-      "Authorization": consumerKey,
+      "Authorization": `Bearer ${accessToken}`,
+      "neo-fin-key": "neotradeapi",
+      "sid": sid,
     },
   }, 2, 1000);
 
@@ -131,13 +171,13 @@ async function fetchScripMasterPaths(baseUrl: string, consumerKey: string): Prom
 // ─── Download and parse scrip master CSV for NIFTY options ───────────
 async function fetchNiftyOptionTokens(
   baseUrl: string,
-  consumerKey: string,
+  accessToken: string,
+  sid: string,
   atmStrike: number,
   strikeRange: number,
 ): Promise<Array<{ instrument_token: string; exchange_segment: string; strike: number; optionType: string }>> {
   try {
-    // Get scrip master file paths
-    const pathsData = await fetchScripMasterPaths(baseUrl, consumerKey);
+    const pathsData = await fetchScripMasterPaths(baseUrl, accessToken, sid);
     console.log(`[ScripMaster] Response keys: ${JSON.stringify(Object.keys(pathsData))}`);
 
     // Find nse_fo CSV URL
@@ -241,7 +281,8 @@ async function fetchNiftyOptionTokens(
 // ─── Build option chain from batch quotes ────────────────────────────
 async function buildOptionChain(
   baseUrl: string,
-  consumerKey: string,
+  accessToken: string,
+  sid: string,
   optionTokens: Array<{ instrument_token: string; exchange_segment: string; strike: number; optionType: string }>,
   atmStrike: number,
 ): Promise<{ chain: any[]; totalCallOI: number; totalPutOI: number }> {
@@ -263,7 +304,7 @@ async function buildOptionChain(
     }));
 
     try {
-      const quotesData = await fetchQuotes(baseUrl, consumerKey, instrumentTokens, "all");
+      const quotesData = await fetchQuotes(baseUrl, accessToken, sid, instrumentTokens, "ALL");
       if (quotesData?.__error) return { chain: [], totalCallOI: 0, totalPutOI: 0 };
 
       // Parse quotes response — SDK returns { message: [...] }
@@ -360,7 +401,7 @@ Deno.serve(async (req) => {
       .limit(1)
       .maybeSingle();
 
-    if (!session?.access_token || !session?.consumer_key) {
+    if (!session?.access_token) {
       console.log(`[MarketData] auth=connected session_missing_credentials user=${user.id}`);
       return new Response(
         JSON.stringify({ success: false, error: "MARKET_DATA_UNAVAILABLE", code: "MARKET_DATA_UNAVAILABLE" }),
@@ -383,10 +424,11 @@ Deno.serve(async (req) => {
 
     // Use base_url from session (set during login) or fallback
     const baseUrl = (session.base_url || FALLBACK_BASE).replace(/\/$/, "");
-    const consumerKey = session.consumer_key;
+    const accessToken = session.access_token;
+    const sid = session.session_token || "";
 
     console.log(`[MarketData] Using base URL: ${baseUrl}`);
-    console.log(`[MarketData] Consumer key present: ${!!consumerKey}`);
+    console.log(`[MarketData] Access token present: ${!!accessToken}, SID present: ${!!sid}`);
     console.log(`[MarketValidation] requested=${validateOnly} symbol=${symbol}`);
 
     // ─── Step 1: Fetch NIFTY spot via quotes API ─────────────────
@@ -411,9 +453,10 @@ Deno.serve(async (req) => {
       console.log(`[MarketData] Trying numeric token: ${numericMapping.token} on ${numericMapping.segment}`);
       let niftyQuote = await fetchQuotes(
         baseUrl,
-        consumerKey,
+        accessToken,
+        sid,
         [{ instrument_token: String(numericMapping.token), exchange_segment: numericMapping.segment }],
-        "ltp"
+        "LTP"
       );
 
       // If numeric token returns fault, try string fallback
@@ -421,9 +464,10 @@ Deno.serve(async (req) => {
         console.log(`[MarketData] Numeric token fault, trying string fallback: ${stringFallback}`);
         niftyQuote = await fetchQuotes(
           baseUrl,
-          consumerKey,
+          accessToken,
+          sid,
           [{ instrument_token: stringFallback, exchange_segment: numericMapping.segment }],
-          "ltp"
+          "LTP"
         );
       }
 
@@ -511,10 +555,10 @@ Deno.serve(async (req) => {
       console.log(`[MarketData] Building option chain, ATM: ${atmStrike}, range: ${strikeRange}`);
 
       // Fetch NIFTY option instrument tokens from scrip master
-      const optionTokens = await fetchNiftyOptionTokens(baseUrl, consumerKey, atmStrike, strikeRange);
+      const optionTokens = await fetchNiftyOptionTokens(baseUrl, accessToken, sid, atmStrike, strikeRange);
 
       if (optionTokens.length > 0) {
-        const result = await buildOptionChain(baseUrl, consumerKey, optionTokens, atmStrike);
+        const result = await buildOptionChain(baseUrl, accessToken, sid, optionTokens, atmStrike);
         niftyChain = result.chain;
         totalCallOI = result.totalCallOI;
         totalPutOI = result.totalPutOI;
