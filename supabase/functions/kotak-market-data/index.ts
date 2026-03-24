@@ -6,19 +6,27 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// ─── SDK-aligned URL config ──────────────────────────────────────────
-// From Kotak Neo SDK v2: neo_api_client/urls.py & settings.py
+// ─── SDK-aligned config (from neo_api_client/urls.py & settings.py) ──
 const FALLBACK_BASE = "https://gw-napi.kotaksecurities.com";
 
-// PROD_URL from SDK settings.py
-const QUOTES_PATH = "script-details/1.0/quotes/neosymbol/{neo_symbols}/{quote_type}";
+// SDK quote path: GET /script-details/1.0/quotes/neosymbol/{neo_symbols}/{quote_type}
+// neo_symbols = comma-separated list of "exchange_segment|instrument_token" pairs
+// quote_type = LTP, OHLC, ALL etc.
+const QUOTES_PATH = "script-details/1.0/quotes/neosymbol";
 const SCRIP_MASTER_PATH = "script-details/1.0/masterscrip/file-paths";
 
-// ─── Retry with backoff ──────────────────────────────────────────────
+// ─── Instrument mapping (SDK uses string names for indices) ──────────
+const INSTRUMENT_NEO_SYMBOLS: Record<string, string> = {
+  NIFTY:     "nse_cm|Nifty 50",
+  BANKNIFTY: "nse_cm|Nifty Bank",
+  SENSEX:    "bse_cm|SENSEX",
+};
+
+// ─── Retry with backoff ─────────────────────────────────────────────
 async function fetchWithRetry(
   url: string,
   options: RequestInit,
-  maxRetries = 3,
+  maxRetries = 2,
   baseDelay = 500,
 ): Promise<Response> {
   let lastError: Error | null = null;
@@ -46,106 +54,82 @@ async function fetchWithRetry(
   throw lastError || new Error("Max retries exceeded");
 }
 
-// ─── Instrument Token Mapping ────────────────────────────────────────
-// Kotak APIs use numeric instrument tokens, not string names
-const INSTRUMENT_MAP: Record<string, { token: number; segment: string }> = {
-  NIFTY:     { token: 26000, segment: "nse_cm" },
-  BANKNIFTY: { token: 26009, segment: "nse_cm" },
-  SENSEX:    { token: 1,     segment: "bse_cm" },
-};
-
-// String fallbacks (some Kotak API versions accept these)
-const INSTRUMENT_STRING_MAP: Record<string, string> = {
-  NIFTY: "Nifty 50",
-  BANKNIFTY: "Nifty Bank",
-  SENSEX: "SENSEX",
-};
-
-// ─── Quote Fetch (POST with instrumentTokens array) ─────────────────
-// Kotak market data API expects POST with { instrumentTokens, quoteType, productType }
-// Auth: Bearer access_token + neo-fin-key + sid headers
-async function fetchQuotes(
+// ─── SDK-aligned quote fetch (GET) ──────────────────────────────────
+// URL: {base}/script-details/1.0/quotes/neosymbol/{neo_symbols}/{quote_type}
+// neo_symbols format: "exchange_segment|token" comma-separated, URL-encoded
+async function fetchQuotesSDK(
   baseUrl: string,
   accessToken: string,
   sid: string,
-  instrumentTokens: Array<{ instrument_token: string; exchange_segment: string }>,
+  neoSymbols: string[], // e.g. ["nse_cm|Nifty 50"]
   quoteType: string = "LTP",
-): Promise<any> {
-  // Build instrumentTokens array as strings: ["26000", "26009"]
-  const tokenStrings = instrumentTokens.map(t => String(t.instrument_token));
-  
-  const requestBody = {
-    instrumentTokens: tokenStrings,
-    quoteType: quoteType.toUpperCase(),
-    productType: "CASH",
-  };
+): Promise<{ data: any; error: string | null; details: any }> {
+  const symbolsParam = encodeURIComponent(neoSymbols.join(","));
+  const url = `${baseUrl}/${QUOTES_PATH}/${symbolsParam}/${quoteType}`;
 
-  // Try multiple endpoint paths
-  const endpoints = [
-    `${baseUrl}/apimarketdata/instruments/quote`,
-    `${baseUrl}/apimarketdata/quote`,
-  ];
-
-  console.log(`[Quotes] Request body: ${JSON.stringify(requestBody)}`);
+  console.log(`[Quotes] GET ${url}`);
   console.log(`[Quotes] Token present: ${!!accessToken}, SID present: ${!!sid}`);
+  console.log(`[Quotes] neo_symbols: ${neoSymbols.join(",")}`);
 
-  let lastError: string = "";
+  try {
+    const res = await fetchWithRetry(url, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "neo-fin-key": "neotradeapi",
+        "sid": sid,
+      },
+    }, 2, 1000);
 
-  for (const url of endpoints) {
-    console.log(`[Quotes] POST ${url}`);
+    const text = await res.text();
+    console.log(`[Quotes] Response ${res.status}: ${text.substring(0, 500)}`);
+
+    if (res.status === 401 || res.status === 403) {
+      return { data: null, error: "SESSION_EXPIRED", details: text.substring(0, 300) };
+    }
+
+    if (!res.ok) {
+      return {
+        data: null,
+        error: `QUOTE_API_ERROR`,
+        details: { status: res.status, body: text.substring(0, 300), url },
+      };
+    }
 
     try {
-      const res = await fetchWithRetry(url, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-          "neo-fin-key": "neotradeapi",
-          "sid": sid,
-        },
-        body: JSON.stringify(requestBody),
-      }, 2, 1000);
-
-      if (res.status === 401 || res.status === 403) {
-        const text = await res.text();
-        console.error(`[Quotes] Auth error ${res.status}: ${text.substring(0, 300)}`);
-        return { __error: "SESSION_EXPIRED", __message: "Session expired — please reconnect broker" };
+      const data = JSON.parse(text);
+      
+      // Check for API-level errors
+      if (data?.fault) {
+        return { data: null, error: "QUOTE_FAULT", details: data.fault };
+      }
+      if (data?.stat === "Not_Ok") {
+        return { data: null, error: "QUOTE_REJECTED", details: data?.emsg || data };
       }
 
-      if (res.status === 404) {
-        lastError = `404 on ${url}`;
-        console.log(`[Quotes] 404 on ${url}, trying next endpoint...`);
-        continue;
-      }
-
-      const text = await res.text();
-      console.log(`[Quotes] Response ${res.status}: ${text.substring(0, 500)}`);
-
-      if (!res.ok) {
-        lastError = `${res.status}: ${text.substring(0, 200)}`;
-        console.error(`[Quotes] Error ${res.status}: ${text.substring(0, 500)}`);
-        continue;
-      }
-
-      try {
-        const data = JSON.parse(text);
-        console.log(`[Quotes] Success, keys: ${JSON.stringify(Object.keys(data))}`);
-        return data;
-      } catch {
-        console.error(`[Quotes] Invalid JSON response: ${text.substring(0, 200)}`);
-        continue;
-      }
-    } catch (err: any) {
-      lastError = err.message;
-      console.error(`[Quotes] Network error on ${url}: ${err.message}`);
-      continue;
+      return { data, error: null, details: null };
+    } catch {
+      return { data: null, error: "INVALID_JSON", details: text.substring(0, 200) };
     }
+  } catch (err: any) {
+    return { data: null, error: "NETWORK_ERROR", details: err.message };
   }
-
-  throw new Error(`All quote endpoints failed. Last error: ${lastError}`);
 }
 
-// ─── Fetch Scrip Master CSV file paths ───────────────────────────────
+// ─── Parse spot price from SDK quote response ───────────────────────
+function parseSpotFromQuote(quoteData: any): { spot: number; change: number } {
+  // SDK returns various shapes: { message: [...] }, { data: [...] }, or direct object
+  const msg = quoteData?.message?.[0] || quoteData?.data?.[0] || quoteData?.message || quoteData;
+  const spot = parseFloat(
+    msg?.last_traded_price || msg?.ltp || msg?.LastTradedPrice || "0"
+  );
+  const change = parseFloat(
+    msg?.percentage_change || msg?.change || msg?.percentChange || "0"
+  );
+  return { spot, change };
+}
+
+// ─── Fetch Scrip Master CSV file paths ──────────────────────────────
 async function fetchScripMasterPaths(baseUrl: string, accessToken: string, sid: string): Promise<any> {
   const url = `${baseUrl}/${SCRIP_MASTER_PATH}`;
   console.log(`[ScripMaster] GET ${url}`);
@@ -168,19 +152,18 @@ async function fetchScripMasterPaths(baseUrl: string, accessToken: string, sid: 
   return res.json();
 }
 
-// ─── Download and parse scrip master CSV for NIFTY options ───────────
+// ─── Download and parse scrip master CSV for NIFTY options ──────────
 async function fetchNiftyOptionTokens(
   baseUrl: string,
   accessToken: string,
   sid: string,
   atmStrike: number,
   strikeRange: number,
-): Promise<Array<{ instrument_token: string; exchange_segment: string; strike: number; optionType: string }>> {
+): Promise<Array<{ neo_symbol: string; strike: number; optionType: string }>> {
   try {
     const pathsData = await fetchScripMasterPaths(baseUrl, accessToken, sid);
     console.log(`[ScripMaster] Response keys: ${JSON.stringify(Object.keys(pathsData))}`);
 
-    // Find nse_fo CSV URL
     const fileList = pathsData?.filesPaths || pathsData?.data?.filesPaths || pathsData?.result || [];
     let nfoUrl = "";
 
@@ -210,33 +193,26 @@ async function fetchNiftyOptionTokens(
     const lines = csvText.split("\n");
     console.log(`[ScripMaster] CSV lines: ${lines.length}`);
 
-    // Parse CSV to find NIFTY options near ATM
-    // CSV format varies — look for NIFTY rows with strike info
-    const tokens: Array<{ instrument_token: string; exchange_segment: string; strike: number; optionType: string }> = [];
+    const tokens: Array<{ neo_symbol: string; strike: number; optionType: string }> = [];
     const header = lines[0]?.toLowerCase() || "";
     const headers = header.split(",");
 
-    // Find column indices
-    const tokenIdx = headers.findIndex(h => h.includes("token") || h.includes("instrument_token") || h.includes("pSymbol"));
-    const symbolIdx = headers.findIndex(h => h.includes("symbol") || h.includes("trading_symbol") || h.includes("pTrdSymbol"));
-    const strikeIdx = headers.findIndex(h => h.includes("strike") || h.includes("strike_price") || h.includes("dStrikePrice"));
-    const optTypeIdx = headers.findIndex(h => h.includes("option") || h.includes("optiontype") || h.includes("pOptionType"));
-    const expiryIdx = headers.findIndex(h => h.includes("expiry") || h.includes("pExpiryDate") || h.includes("dExpiry"));
+    const tokenIdx = headers.findIndex(h => h.includes("token") || h.includes("instrument_token") || h.includes("psymbol"));
+    const symbolIdx = headers.findIndex(h => h.includes("symbol") || h.includes("trading_symbol") || h.includes("ptrdsymbol"));
+    const strikeIdx = headers.findIndex(h => h.includes("strike") || h.includes("strike_price") || h.includes("dstrikeprice"));
+    const optTypeIdx = headers.findIndex(h => h.includes("option") || h.includes("optiontype") || h.includes("poptiontype"));
+    const expiryIdx = headers.findIndex(h => h.includes("expiry") || h.includes("pexpirydate") || h.includes("dexpiry"));
 
     console.log(`[ScripMaster] Column indices — token:${tokenIdx} symbol:${symbolIdx} strike:${strikeIdx} optType:${optTypeIdx} expiry:${expiryIdx}`);
 
     if (tokenIdx < 0) {
-      // Try alternate format: fixed column positions for Kotak scrip master
-      // Kotak CSV: pSymbol, pGroup, pExchSeg, pInstType, pSymbolName, pTrdSymbol, pOptionType, dStrikePrice, ...
       console.log(`[ScripMaster] Headers: ${headers.slice(0, 15).join(", ")}`);
       return [];
     }
 
-    // Find the nearest expiry for NIFTY options
-    const today = new Date();
-    let nearestExpiry = "";
     const minStrike = atmStrike - strikeRange * 50;
     const maxStrike = atmStrike + strikeRange * 50;
+    let nearestExpiry = "";
 
     for (let i = 1; i < lines.length; i++) {
       const cols = lines[i].split(",");
@@ -246,7 +222,6 @@ async function fetchNiftyOptionTokens(
       if (!symbol.includes("NIFTY") || symbol.includes("BANKNIFTY") || symbol.includes("FINNIFTY")) continue;
 
       const strike = parseFloat(cols[strikeIdx] || "0");
-      // Kotak stores strikes as strike * 100 in some formats
       const normalizedStrike = strike > 100000 ? strike / 100 : strike;
       if (normalizedStrike < minStrike || normalizedStrike > maxStrike) continue;
 
@@ -254,16 +229,12 @@ async function fetchNiftyOptionTokens(
       if (optType !== "CE" && optType !== "PE") continue;
 
       const expiry = cols[expiryIdx]?.trim() || "";
-
-      // Track nearest expiry
-      if (!nearestExpiry && expiry) {
-        nearestExpiry = expiry;
-      }
+      if (!nearestExpiry && expiry) nearestExpiry = expiry;
 
       if (expiry === nearestExpiry) {
+        // SDK neo_symbol format: "exchange_segment|instrument_token"
         tokens.push({
-          instrument_token: cols[tokenIdx].trim(),
-          exchange_segment: "nse_fo",
+          neo_symbol: `nse_fo|${cols[tokenIdx].trim()}`,
           strike: normalizedStrike,
           optionType: optType,
         });
@@ -278,12 +249,12 @@ async function fetchNiftyOptionTokens(
   }
 }
 
-// ─── Build option chain from batch quotes ────────────────────────────
+// ─── Build option chain from SDK quotes ─────────────────────────────
 async function buildOptionChain(
   baseUrl: string,
   accessToken: string,
   sid: string,
-  optionTokens: Array<{ instrument_token: string; exchange_segment: string; strike: number; optionType: string }>,
+  optionTokens: Array<{ neo_symbol: string; strike: number; optionType: string }>,
   atmStrike: number,
 ): Promise<{ chain: any[]; totalCallOI: number; totalPutOI: number }> {
   const strikeMap = new Map<number, any>();
@@ -294,20 +265,17 @@ async function buildOptionChain(
     return { chain: [], totalCallOI: 0, totalPutOI: 0 };
   }
 
-  // Fetch quotes in batches of 20 (SDK limitation)
+  // Fetch quotes in batches of 20
   const BATCH_SIZE = 20;
   for (let i = 0; i < optionTokens.length; i += BATCH_SIZE) {
     const batch = optionTokens.slice(i, i + BATCH_SIZE);
-    const instrumentTokens = batch.map(t => ({
-      instrument_token: t.instrument_token,
-      exchange_segment: t.exchange_segment,
-    }));
+    const neoSymbols = batch.map(t => t.neo_symbol);
 
     try {
-      const quotesData = await fetchQuotes(baseUrl, accessToken, sid, instrumentTokens, "ALL");
-      if (quotesData?.__error) return { chain: [], totalCallOI: 0, totalPutOI: 0 };
+      const { data: quotesData, error } = await fetchQuotesSDK(baseUrl, accessToken, sid, neoSymbols, "ALL");
+      if (error === "SESSION_EXPIRED") return { chain: [], totalCallOI: 0, totalPutOI: 0 };
+      if (error || !quotesData) continue;
 
-      // Parse quotes response — SDK returns { message: [...] }
       const quotesList = quotesData?.message || quotesData?.data || quotesData?.result || [];
       const quotesArray = Array.isArray(quotesList) ? quotesList : [quotesList];
 
@@ -318,8 +286,7 @@ async function buildOptionChain(
 
         if (!strikeMap.has(strike)) {
           strikeMap.set(strike, {
-            strike,
-            callLTP: 0, putLTP: 0, callOI: 0, putOI: 0,
+            strike, callLTP: 0, putLTP: 0, callOI: 0, putOI: 0,
             callOIChange: 0, putOIChange: 0, callVolume: 0, putVolume: 0,
             callBid: 0, callAsk: 0, putBid: 0, putAsk: 0,
             isATM: strike === atmStrike,
@@ -327,28 +294,20 @@ async function buildOptionChain(
         }
 
         const row = strikeMap.get(strike)!;
-        const ltp = parseFloat(quote?.last_traded_price || quote?.ltp || quote?.LastTradedPrice || "0");
-        const oi = parseInt(quote?.open_interest || quote?.oi || quote?.openInterest || "0", 10);
-        const oiChange = parseInt(quote?.change_in_oi || quote?.changeInOpenInterest || "0", 10);
-        const vol = parseInt(quote?.volume || quote?.totalTradedVolume || "0", 10);
-        const bid = parseFloat(quote?.best_bid_price || quote?.bidPrice || quote?.bp || "0");
-        const ask = parseFloat(quote?.best_ask_price || quote?.askPrice || quote?.sp || "0");
+        const ltp = parseFloat(quote?.last_traded_price || quote?.ltp || "0");
+        const oi = parseInt(quote?.open_interest || quote?.oi || "0", 10);
+        const oiChange = parseInt(quote?.change_in_oi || "0", 10);
+        const vol = parseInt(quote?.volume || "0", 10);
+        const bid = parseFloat(quote?.best_bid_price || quote?.bp || "0");
+        const ask = parseFloat(quote?.best_ask_price || quote?.sp || "0");
 
         if (tokenInfo.optionType === "CE") {
-          row.callLTP = ltp;
-          row.callOI = oi;
-          row.callOIChange = oiChange;
-          row.callVolume = vol;
-          row.callBid = bid;
-          row.callAsk = ask;
+          row.callLTP = ltp; row.callOI = oi; row.callOIChange = oiChange;
+          row.callVolume = vol; row.callBid = bid; row.callAsk = ask;
           totalCallOI += oi;
         } else {
-          row.putLTP = ltp;
-          row.putOI = oi;
-          row.putOIChange = oiChange;
-          row.putVolume = vol;
-          row.putBid = bid;
-          row.putAsk = ask;
+          row.putLTP = ltp; row.putOI = oi; row.putOIChange = oiChange;
+          row.putVolume = vol; row.putBid = bid; row.putAsk = ask;
           totalPutOI += oi;
         }
       }
@@ -361,7 +320,22 @@ async function buildOptionChain(
   return { chain, totalCallOI, totalPutOI };
 }
 
-// ─── Main Handler ────────────────────────────────────────────────────
+// ─── Empty chain helper ─────────────────────────────────────────────
+function emptyChain(atmStrike: number, strikeRange: number): any[] {
+  const chain: any[] = [];
+  for (let i = -strikeRange; i <= strikeRange; i++) {
+    const strike = atmStrike + i * 50;
+    chain.push({
+      strike, callLTP: 0, putLTP: 0, callOI: 0, putOI: 0,
+      callOIChange: 0, putOIChange: 0, callVolume: 0, putVolume: 0,
+      callBid: 0, callAsk: 0, putBid: 0, putAsk: 0,
+      isATM: strike === atmStrike,
+    });
+  }
+  return chain;
+}
+
+// ─── Main Handler ───────────────────────────────────────────────────
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -402,9 +376,8 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (!session?.access_token) {
-      console.log(`[MarketData] auth=connected session_missing_credentials user=${user.id}`);
       return new Response(
-        JSON.stringify({ success: false, error: "MARKET_DATA_UNAVAILABLE", code: "MARKET_DATA_UNAVAILABLE" }),
+        JSON.stringify({ success: false, error: "MARKET_DATA_UNAVAILABLE", code: "NO_SESSION" }),
         { status: 200, headers }
       );
     }
@@ -422,130 +395,89 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const { strikeRange = 10, validateOnly = false, symbol = "NIFTY" } = body;
 
-    // Use base_url from session (set during login) or fallback
     const baseUrl = (session.base_url || FALLBACK_BASE).replace(/\/$/, "");
     const accessToken = session.access_token;
     const sid = session.session_token || "";
 
-    console.log(`[MarketData] Using base URL: ${baseUrl}`);
-    console.log(`[MarketData] Access token present: ${!!accessToken}, SID present: ${!!sid}`);
-    console.log(`[MarketValidation] requested=${validateOnly} symbol=${symbol}`);
+    console.log(`[MarketData] baseUrl=${baseUrl} token=${!!accessToken} sid=${!!sid}`);
 
-    // ─── Step 1: Fetch NIFTY spot via quotes API ─────────────────
-    // Try numeric token first, then string fallback
-    let niftySpot = 0;
-    let niftyChange = 0;
-
+    // ─── Step 1: Fetch spot price via SDK-aligned quote ─────────
     const symbolKey = symbol?.toUpperCase() || "NIFTY";
-    const numericMapping = INSTRUMENT_MAP[symbolKey];
-    const stringFallback = INSTRUMENT_STRING_MAP[symbolKey];
+    const neoSymbol = INSTRUMENT_NEO_SYMBOLS[symbolKey];
 
-    if (!numericMapping) {
-      console.error(`[MarketData] Unknown symbol: ${symbolKey}`);
+    if (!neoSymbol) {
       return new Response(
         JSON.stringify({ success: false, error: "INVALID_SYMBOL", code: "INVALID_SYMBOL" }),
         { status: 200, headers }
       );
     }
 
-    try {
-      // Attempt 1: numeric instrument token
-      console.log(`[MarketData] Trying numeric token: ${numericMapping.token} on ${numericMapping.segment}`);
-      let niftyQuote = await fetchQuotes(
-        baseUrl,
-        accessToken,
-        sid,
-        [{ instrument_token: String(numericMapping.token), exchange_segment: numericMapping.segment }],
-        "LTP"
-      );
+    console.log(`[MarketData] Fetching quote for ${symbolKey} → ${neoSymbol}`);
 
-      // If numeric token returns fault, try string fallback
-      if (niftyQuote?.fault && stringFallback) {
-        console.log(`[MarketData] Numeric token fault, trying string fallback: ${stringFallback}`);
-        niftyQuote = await fetchQuotes(
-          baseUrl,
-          accessToken,
-          sid,
-          [{ instrument_token: stringFallback, exchange_segment: numericMapping.segment }],
-          "LTP"
-        );
-      }
+    const quoteResult = await fetchQuotesSDK(baseUrl, accessToken, sid, [neoSymbol], "LTP");
 
-      if (niftyQuote?.__error === "SESSION_EXPIRED") {
-        await adminClient.from("broker_sessions")
-          .update({ is_active: false, updated_at: new Date().toISOString() })
-          .eq("id", session.id);
-        return new Response(
-          JSON.stringify({ success: false, error: "SESSION_EXPIRED", code: "SESSION_EXPIRED" }),
-          { status: 200, headers }
-        );
-      }
-
-      // Check for API fault response (invalid symbol, etc.)
-      if (niftyQuote?.fault) {
-        console.error(`[Quotes] NIFTY fault: ${JSON.stringify(niftyQuote.fault)}`);
-        // Return unavailable but don't crash — auth is still valid
-        return new Response(
-          JSON.stringify({ success: false, error: "MARKET_DATA_UNAVAILABLE", code: "MARKET_DATA_UNAVAILABLE", details: niftyQuote.fault }),
-          { status: 200, headers }
-        );
-      }
-
-      // SDK response format: { message: [{ last_traded_price: "...", ... }] }
-      const quoteMsg = niftyQuote?.message?.[0] || niftyQuote?.data?.[0] || niftyQuote;
-      console.log("[Quotes] NIFTY quote response:", JSON.stringify(quoteMsg).substring(0, 500));
-
-      niftySpot = parseFloat(
-        quoteMsg?.last_traded_price || quoteMsg?.ltp || quoteMsg?.LastTradedPrice || "0"
-      );
-      niftyChange = parseFloat(
-        quoteMsg?.percentage_change || quoteMsg?.change || quoteMsg?.percentChange || "0"
-      );
-
-      console.log(`[MarketData] NIFTY spot: ${niftySpot}, change: ${niftyChange}`);
-    } catch (err: any) {
-      console.log(`[MarketValidation] result=failed error=${err.message}`);
-      console.error(`[MarketData] Spot price fetch failed: ${err.message}`);
+    if (quoteResult.error === "SESSION_EXPIRED") {
+      await adminClient.from("broker_sessions")
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq("id", session.id);
       return new Response(
-          JSON.stringify({ success: false, error: "MARKET_DATA_UNAVAILABLE", code: "MARKET_DATA_UNAVAILABLE" }),
+        JSON.stringify({ success: false, error: "SESSION_EXPIRED", code: "SESSION_EXPIRED" }),
         { status: 200, headers }
       );
     }
 
+    let niftySpot = 0;
+    let niftyChange = 0;
+
+    if (quoteResult.error || !quoteResult.data) {
+      console.error(`[MarketData] Quote failed: ${quoteResult.error}`, quoteResult.details);
+
+      if (validateOnly) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "MARKET_DATA_UNAVAILABLE",
+            code: "MARKET_VALIDATION_FAILED",
+            details: { quoteError: quoteResult.error, quoteDetails: quoteResult.details },
+            validation: { auth: "connected", marketData: "disconnected", trading: "connected", symbol: symbolKey, quote: 0 },
+          }),
+          { headers }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ success: false, error: "MARKET_DATA_UNAVAILABLE", code: "MARKET_DATA_UNAVAILABLE", details: quoteResult.details }),
+        { status: 200, headers }
+      );
+    }
+
+    const parsed = parseSpotFromQuote(quoteResult.data);
+    niftySpot = parsed.spot;
+    niftyChange = parsed.change;
+    console.log(`[MarketData] ${symbolKey} spot=${niftySpot} change=${niftyChange}`);
+
     if (validateOnly) {
       const marketDataState = niftySpot > 0 ? "connected" : "disconnected";
-      console.log(`[MarketValidation] result=${marketDataState} symbol=${symbol} quote=${niftySpot}`);
-
+      console.log(`[MarketValidation] result=${marketDataState} symbol=${symbolKey} quote=${niftySpot}`);
       return new Response(
         JSON.stringify({
           success: niftySpot > 0,
-          validation: {
-            auth: "connected",
-            marketData: marketDataState,
-            trading: "connected",
-            symbol,
-            quote: niftySpot,
-             error: niftySpot > 0 ? null : "MARKET_DATA_UNAVAILABLE",
-          },
-           error: niftySpot > 0 ? null : "MARKET_DATA_UNAVAILABLE",
+          validation: { auth: "connected", marketData: marketDataState, trading: "connected", symbol: symbolKey, quote: niftySpot },
+          error: niftySpot > 0 ? null : "MARKET_DATA_UNAVAILABLE",
           code: niftySpot > 0 ? "VALIDATION_OK" : "MARKET_VALIDATION_FAILED",
         }),
-        { headers },
+        { headers }
       );
     }
 
     if (niftySpot <= 0) {
       return new Response(JSON.stringify({
         success: true,
-        data: {
-          niftySpot: 0, sensexSpot: 0, niftyChange: 0, sensexChange: 0,
-          niftyPCR: 0, sensexPCR: 0, niftyATM: 0, sensexATM: 0,
-          niftyChain: [], sensexChain: [], timestamp: Date.now(),
-        }
+        data: { niftySpot: 0, sensexSpot: 0, niftyChange: 0, sensexChange: 0, niftyPCR: 0, sensexPCR: 0, niftyATM: 0, sensexATM: 0, niftyChain: [], sensexChain: [], timestamp: Date.now() }
       }), { headers });
     }
 
-    // ─── Step 2: Build option chain ──────────────────────────────
+    // ─── Step 2: Build option chain ─────────────────────────────
     const atmStrike = Math.round(niftySpot / 50) * 50;
     let niftyChain: any[] = [];
     let totalCallOI = 0;
@@ -553,8 +485,6 @@ Deno.serve(async (req) => {
 
     try {
       console.log(`[MarketData] Building option chain, ATM: ${atmStrike}, range: ${strikeRange}`);
-
-      // Fetch NIFTY option instrument tokens from scrip master
       const optionTokens = await fetchNiftyOptionTokens(baseUrl, accessToken, sid, atmStrike, strikeRange);
 
       if (optionTokens.length > 0) {
@@ -562,30 +492,13 @@ Deno.serve(async (req) => {
         niftyChain = result.chain;
         totalCallOI = result.totalCallOI;
         totalPutOI = result.totalPutOI;
-        console.log(`[MarketData] Option chain: ${niftyChain.length} strikes, callOI: ${totalCallOI}, putOI: ${totalPutOI}`);
+        console.log(`[MarketData] Option chain: ${niftyChain.length} strikes`);
       } else {
-        console.log("[MarketData] No option tokens found, building empty chain");
-        for (let i = -strikeRange; i <= strikeRange; i++) {
-          const strike = atmStrike + i * 50;
-          niftyChain.push({
-            strike, callLTP: 0, putLTP: 0, callOI: 0, putOI: 0,
-            callOIChange: 0, putOIChange: 0, callVolume: 0, putVolume: 0,
-            callBid: 0, callAsk: 0, putBid: 0, putAsk: 0,
-            isATM: strike === atmStrike,
-          });
-        }
+        niftyChain = emptyChain(atmStrike, strikeRange);
       }
     } catch (err: any) {
       console.error(`[MarketData] Option chain error: ${err.message}`);
-      for (let i = -strikeRange; i <= strikeRange; i++) {
-        const strike = atmStrike + i * 50;
-        niftyChain.push({
-          strike, callLTP: 0, putLTP: 0, callOI: 0, putOI: 0,
-          callOIChange: 0, putOIChange: 0, callVolume: 0, putVolume: 0,
-          callBid: 0, callAsk: 0, putBid: 0, putAsk: 0,
-          isATM: strike === atmStrike,
-        });
-      }
+      niftyChain = emptyChain(atmStrike, strikeRange);
     }
 
     const niftyPCR = totalCallOI > 0 ? Math.round((totalPutOI / totalCallOI) * 100) / 100 : 0;
