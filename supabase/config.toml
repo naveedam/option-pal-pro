@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.kotak-market-data]
 verify_jwt = false
+
+[functions.kotak-ws-test]
+verify_jwt = false
