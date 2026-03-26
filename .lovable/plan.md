@@ -1,52 +1,36 @@
 
 
-## Minimal Kotak Neo WebSocket Test — Edge Function PoC
+## Replace REST Market Data with WebSocket Source
 
-### Why an edge function
-Kotak's WebSocket server (`wss://mlhsm.kotaksecurities.com`) blocks browser origins. All broker API calls in this project are already backend-only via edge functions. This PoC follows the same pattern.
+### Problem
+The UI calls `kotak-market-data` (REST) which consistently fails. A working WebSocket test function (`kotak-ws-test`) already exists and can deliver live ticks.
 
-### What to build
+### Plan
 
-**Create `supabase/functions/kotak-ws-test/index.ts`**
+**1. Update `marketDataProvider.ts` — switch to `kotak-ws-test`**
+- In `doFetch()`, replace `supabase.functions.invoke('kotak-market-data', ...)` with `supabase.functions.invoke('kotak-ws-test')`
+- No request body needed (the WS test function reads session from DB automatically)
+- Parse response: extract LTP from `data.ticks[0]` (try `ltp`, then `last_traded_price`, then raw numeric parse)
+- Build a `MarketData` object with `niftySpot: ltp` and zeroed-out fields for option chain (since WS test only streams index quotes)
+- Mark success when `data.connected === true && data.tickCount > 0`
+- Keep circuit breaker, cache, rate limiter, and dedup logic unchanged
 
-A single edge function that:
+**2. Update `useBrokerConnection.ts` — switch validation call**
+- In `validateMarketData()`, replace `supabase.functions.invoke('kotak-market-data', { body: { validateOnly: true } })` with `supabase.functions.invoke('kotak-ws-test')`
+- Success condition: `data.connected === true && data.tickCount > 0`
+- Extract quote price from ticks for the validation log
 
-1. Authenticates the caller, retrieves `access_token` and `session_token` from `broker_sessions`
-2. Opens a WebSocket to `wss://mlhsm.kotaksecurities.com`
-3. On open, sends a subscribe message for NIFTY (token 26000)
-4. Collects up to 5 incoming messages or times out after 10 seconds
-5. Returns a JSON response with: connection status, messages received, and any errors
+**3. No changes needed to:**
+- `kotakMarketFeed.ts` (it calls `marketDataProvider` which we're fixing)
+- `useMarketData.ts` (it uses `KotakMarketFeed` which uses `marketDataProvider`)
+- Dashboard or UI components (they already handle the market data states correctly)
 
-```text
-Client → invoke("kotak-ws-test")
-       → Edge fn reads session from DB
-       → Opens WSS to mlhsm.kotaksecurities.com
-       → Sends: { type: "subscribe", instrument_tokens: [{ instrument_token: "26000", exchange_segment: "nse_cm" }], isIndex: true, isDepth: false }
-       → Collects ticks for ≤10s
-       → Returns { connected, tickCount, ticks[], errors[], logs[] }
-```
+### Files to modify
+- `src/services/marketDataProvider.ts` — swap invoke target, parse WS response
+- `src/hooks/useBrokerConnection.ts` — swap validation invoke target
 
-**Key details:**
-- Deno has native `WebSocket` — no dependencies needed
-- Auth headers may need query params (`?access_token=X&sid=Y`) — try header approach first, fall back to query params
-- The entire WebSocket lifecycle is wrapped in a single `Promise` with a 10s timeout
-- All events (open, message, error, close) are logged and returned in the response for diagnosis
-- Standard CORS headers included
-
-### What NOT to build
-- No frontend UI changes
-- No retry/reconnect logic
-- No option chain subscription
-- No changes to existing `kotakMarketFeed.ts` or `useMarketData.ts`
-
-### How to test after deployment
-```javascript
-const { data, error } = await supabase.functions.invoke('kotak-ws-test');
-console.log(data);
-// Expected: { connected: true, tickCount: N, ticks: [...], errors: [], logs: [...] }
-```
-
-### Files
-- **Create:** `supabase/functions/kotak-ws-test/index.ts`
-- No other files modified
+### Expected result
+- `MARKET_DATA_UNAVAILABLE` disappears after login
+- NIFTY spot price shows in the ticker
+- Option chain remains empty until a dedicated WS subscription is built later
 
