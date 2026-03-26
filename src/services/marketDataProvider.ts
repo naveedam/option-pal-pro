@@ -192,31 +192,58 @@ export class MarketDataProvider {
     try {
       const result = await retryWithBackoff(
         async () => {
-          const { data, error } = await supabase.functions.invoke('kotak-market-data', {
-            body: { instruments, strikeRange },
-          });
+          const { data, error } = await supabase.functions.invoke('kotak-ws-test');
 
           if (error) {
             throw new Error(error.message || 'Edge function error');
           }
 
-          if (!data?.success) {
-            const code = data?.code;
-            console.log('[MarketDataProvider] API failure', { code, error: data?.error });
-            // Session-level errors — don't retry
-            if (code === 'NO_SESSION' || code === 'SESSION_EXPIRED') {
-              const sessionError = new Error(data?.error || 'Session expired') as any;
+          console.log('[MarketDataProvider] WS response', {
+            connected: data?.connected,
+            tickCount: data?.tickCount,
+            errors: data?.errors,
+          });
+
+          if (!data?.connected || !data?.tickCount) {
+            const code = data?.error === 'NO_SESSION' ? 'NO_SESSION' : undefined;
+            if (code === 'NO_SESSION') {
+              const sessionError = new Error('No broker session') as any;
               sessionError.isSessionError = true;
               sessionError.code = code;
               throw sessionError;
             }
-            throw new Error(data?.error || 'API error');
+            throw new Error(data?.errors?.[0] || 'WebSocket connection failed');
           }
 
-          return data.data as MarketData;
+          // Extract LTP from first tick
+          const tick = data.ticks?.[0];
+          let ltp = 0;
+          if (tick && typeof tick === 'object') {
+            ltp = tick.ltp ?? tick.last_traded_price ?? tick.LTP ?? 0;
+          } else if (typeof tick === 'number') {
+            ltp = tick;
+          }
+
+          console.log('[MarketDataProvider] Extracted LTP:', ltp);
+
+          const marketData: MarketData = {
+            niftySpot: ltp,
+            sensexSpot: 0,
+            niftyChange: 0,
+            sensexChange: 0,
+            niftyPCR: 0,
+            sensexPCR: 0,
+            niftyATM: ltp > 0 ? Math.round(ltp / 50) * 50 : 0,
+            sensexATM: 0,
+            niftyChain: [],
+            sensexChain: [],
+            timestamp: Date.now(),
+          };
+
+          return marketData;
         },
-        3, // max 3 retries for API calls
-        1000, // 1s base delay
+        2, // max 2 retries (WS has its own timeout)
+        2000, // 2s base delay
         (attempt, err) => {
           console.log(`[MarketData] Retry ${attempt}: ${err.message}`);
         },
