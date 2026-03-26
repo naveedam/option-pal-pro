@@ -8,7 +8,242 @@ const corsHeaders = {
 
 const WS_URL = "wss://mlhsm.kotaksecurities.com";
 const MAX_TICKS = 5;
-const TIMEOUT_MS = 10_000;
+const TIMEOUT_MS = 15_000;
+
+// Protocol constants (from Kotak Neo Python SDK HSWebSocketLib.py)
+const CONNECTION_TYPE = 1;
+const SUBSCRIBE_TYPE = 4;
+const DATA_TYPE = 6;
+const ACK_TYPE = 9;
+const INDEX_PREFIX = "if";
+
+// --- Binary protocol helpers ported from Python SDK ---
+
+function encodeUTF8(str: string): Uint8Array {
+  return new TextEncoder().encode(str);
+}
+
+function decodeUTF8(bytes: Uint8Array): string {
+  return new TextDecoder().decode(bytes);
+}
+
+/** Pack a 16-bit big-endian unsigned int */
+function packUint16BE(value: number): Uint8Array {
+  const buf = new Uint8Array(2);
+  buf[0] = (value >> 8) & 0xff;
+  buf[1] = value & 0xff;
+  return buf;
+}
+
+/** Read a 16-bit big-endian unsigned int */
+function readUint16BE(buf: Uint8Array, offset: number): number {
+  return (buf[offset] << 8) | buf[offset + 1];
+}
+
+/** Pack a 32-bit big-endian signed int */
+function packInt32BE(value: number): Uint8Array {
+  const buf = new Uint8Array(4);
+  const view = new DataView(buf.buffer);
+  view.setInt32(0, value, false);
+  return buf;
+}
+
+/** Read a 32-bit big-endian signed int */
+function readInt32BE(buf: Uint8Array, offset: number): number {
+  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  return view.getInt32(offset, false);
+}
+
+/** Read a 64-bit big-endian signed int as number */
+function readInt64BE(buf: Uint8Array, offset: number): number {
+  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  const hi = view.getInt32(offset, false);
+  const lo = view.getUint32(offset + 4, false);
+  return hi * 0x100000000 + lo;
+}
+
+/**
+ * Build binary connection request (prepareConnectionRequest2 from SDK).
+ * Format:
+ *   [2 bytes: total_len] [1 byte: CONNECTION_TYPE]
+ *   [2 bytes: jwt_len] [jwt bytes]
+ *   [2 bytes: sid_len] [sid bytes]
+ *   [2 bytes: source_len] [source bytes]
+ */
+function buildConnectionRequest(jwt: string, sid: string): Uint8Array {
+  const jwtBytes = encodeUTF8(jwt);
+  const sidBytes = encodeUTF8(sid);
+  const sourceBytes = encodeUTF8("JS_API");
+
+  const payloadLen = 1 + 2 + jwtBytes.length + 2 + sidBytes.length + 2 + sourceBytes.length;
+  const totalLen = 2 + payloadLen; // 2 bytes for length prefix + payload
+
+  const buf = new Uint8Array(totalLen);
+  let offset = 0;
+
+  // Total length (excluding the 2-byte length field itself)
+  buf[offset++] = (payloadLen >> 8) & 0xff;
+  buf[offset++] = payloadLen & 0xff;
+
+  // Type
+  buf[offset++] = CONNECTION_TYPE;
+
+  // JWT
+  buf[offset++] = (jwtBytes.length >> 8) & 0xff;
+  buf[offset++] = jwtBytes.length & 0xff;
+  buf.set(jwtBytes, offset);
+  offset += jwtBytes.length;
+
+  // SID
+  buf[offset++] = (sidBytes.length >> 8) & 0xff;
+  buf[offset++] = sidBytes.length & 0xff;
+  buf.set(sidBytes, offset);
+  offset += sidBytes.length;
+
+  // Source
+  buf[offset++] = (sourceBytes.length >> 8) & 0xff;
+  buf[offset++] = sourceBytes.length & 0xff;
+  buf.set(sourceBytes, offset);
+
+  return buf;
+}
+
+/**
+ * Build binary subscribe/unsubscribe request (prepareSubsUnSubsRequest from SDK).
+ * Format:
+ *   [2 bytes: total_len] [1 byte: SUBSCRIBE_TYPE or UNSUBSCRIBE_TYPE]
+ *   [1 byte: scrip_count]
+ *   For each scrip:
+ *     [2 bytes: scrip_len] [scrip bytes]  (e.g. "if|26000")
+ */
+function buildSubscribeRequest(scrips: string[]): Uint8Array {
+  const scripBytesList = scrips.map((s) => encodeUTF8(s));
+  let payloadLen = 1 + 1; // type + count
+  for (const sb of scripBytesList) {
+    payloadLen += 2 + sb.length;
+  }
+  const totalLen = 2 + payloadLen;
+  const buf = new Uint8Array(totalLen);
+  let offset = 0;
+
+  buf[offset++] = (payloadLen >> 8) & 0xff;
+  buf[offset++] = payloadLen & 0xff;
+  buf[offset++] = SUBSCRIBE_TYPE;
+  buf[offset++] = scrips.length;
+
+  for (const sb of scripBytesList) {
+    buf[offset++] = (sb.length >> 8) & 0xff;
+    buf[offset++] = sb.length & 0xff;
+    buf.set(sb, offset);
+    offset += sb.length;
+  }
+
+  return buf;
+}
+
+/**
+ * Build ACK request.
+ * Format: [2 bytes: len=1] [1 byte: ACK_TYPE]
+ */
+function buildAckRequest(): Uint8Array {
+  return new Uint8Array([0, 1, ACK_TYPE]);
+}
+
+/**
+ * Parse connection response.
+ * Returns status char: "K" = OK, "N" = NOT_OK
+ */
+function parseConnectionResponse(buf: Uint8Array): { type: number; status: string } {
+  if (buf.length < 3) return { type: 0, status: "?" };
+  // [2 bytes len] [1 byte type] [1 byte status]
+  const type = buf[2];
+  const status = buf.length > 3 ? String.fromCharCode(buf[3]) : "?";
+  return { type, status };
+}
+
+/**
+ * Parse index tick data from binary message.
+ * Index data fields (from SDK INDEX_MAPPING):
+ *   Field order after header: token(str), ltp(int), change(int), changePercent(int),
+ *   open(int), high(int), low(int), close(int), yearlyHigh(int), yearlyLow(int)
+ */
+function parseIndexData(buf: Uint8Array, offset: number): Record<string, unknown> | null {
+  try {
+    // Read scrip name length + name
+    if (offset + 2 > buf.length) return null;
+    const scripLen = readUint16BE(buf, offset);
+    offset += 2;
+    if (offset + scripLen > buf.length) return null;
+    const scrip = decodeUTF8(buf.slice(offset, offset + scripLen));
+    offset += scripLen;
+
+    // Read numeric fields - each is 4 bytes (int32)
+    // SDK divides by 100 for price fields
+    const fields: string[] = ["ltp", "change", "changePercent", "open", "high", "low", "close", "yearlyHigh", "yearlyLow"];
+    const result: Record<string, unknown> = { scrip };
+
+    for (const field of fields) {
+      if (offset + 4 > buf.length) break;
+      const raw = readInt32BE(buf, offset);
+      offset += 4;
+      // Prices are in paisa (x100), percentages in x100
+      result[field] = raw / 100;
+    }
+
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse incoming binary message.
+ */
+function parseMessage(buf: Uint8Array, log: (msg: string) => void): { type: number; data: unknown } {
+  if (buf.length < 3) {
+    return { type: -1, data: null };
+  }
+
+  const msgLen = readUint16BE(buf, 0);
+  const msgType = buf[2];
+
+  if (msgType === CONNECTION_TYPE) {
+    const status = buf.length > 3 ? String.fromCharCode(buf[3]) : "?";
+    return { type: CONNECTION_TYPE, data: { status } };
+  }
+
+  if (msgType === DATA_TYPE) {
+    // Data message: [2 len] [1 type] [1 count] [data...]
+    if (buf.length < 4) return { type: DATA_TYPE, data: null };
+    const count = buf[3];
+    const ticks: Record<string, unknown>[] = [];
+    let offset = 4;
+
+    for (let i = 0; i < count; i++) {
+      const tick = parseIndexData(buf, offset);
+      if (tick) {
+        ticks.push(tick);
+        // Advance offset - estimate based on scrip name + 9 int32 fields
+        if (offset + 2 <= buf.length) {
+          const scripLen = readUint16BE(buf, offset);
+          offset += 2 + scripLen + 9 * 4;
+        }
+      } else {
+        break;
+      }
+    }
+
+    return { type: DATA_TYPE, data: ticks };
+  }
+
+  // Other types: try to decode as text for logging
+  try {
+    const text = decodeUTF8(buf.slice(2));
+    return { type: msgType, data: text };
+  } catch {
+    return { type: msgType, data: `[binary ${buf.length}b]` };
+  }
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -57,9 +292,10 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: "NO_SESSION", logs }), { status: 200, headers });
     }
 
-    log(`Session found. access_token present, sid=${session.session_token ? "present" : "missing"}`);
+    const sid = session.session_token || "";
+    log(`Session found. access_token present, sid=${sid ? "present" : "missing"}`);
 
-    // 3. Open WebSocket
+    // 3. Open WebSocket with binary protocol
     const ticks: unknown[] = [];
     const errors: string[] = [];
 
@@ -67,15 +303,16 @@ Deno.serve(async (req) => {
       const timeout = setTimeout(() => {
         log("Timeout reached, closing WebSocket");
         try { ws.close(); } catch { /* ignore */ }
-        resolve({ connected: ticks.length > 0 || errors.length === 0 });
+        resolve({ connected: ticks.length > 0 });
       }, TIMEOUT_MS);
 
       let ws: WebSocket;
+      let authenticated = false;
+
       try {
-        // Try with query params for auth
-        const wsUrl = `${WS_URL}?access_token=${encodeURIComponent(session.access_token!)}&sid=${encodeURIComponent(session.session_token || "")}`;
-        log(`Connecting to WebSocket: ${WS_URL} (with query auth)`);
-        ws = new WebSocket(wsUrl);
+        log(`Connecting to WebSocket: ${WS_URL}`);
+        ws = new WebSocket(WS_URL);
+        ws.binaryType = "arraybuffer";
       } catch (e) {
         clearTimeout(timeout);
         errors.push(`WebSocket constructor error: ${e}`);
@@ -85,37 +322,68 @@ Deno.serve(async (req) => {
       }
 
       ws.onopen = () => {
-        log("WebSocket OPEN");
-
-        const subscribeMsg = JSON.stringify({
-          type: "subscribe",
-          instrument_tokens: [
-            { instrument_token: "26000", exchange_segment: "nse_cm" }
-          ],
-          isIndex: true,
-          isDepth: false,
-        });
-
-        log(`Sending subscribe: ${subscribeMsg}`);
-        ws.send(subscribeMsg);
+        log("WebSocket OPEN — sending binary connection request");
+        const connReq = buildConnectionRequest(session.access_token!, sid);
+        log(`Connection request: ${connReq.length} bytes`);
+        ws.send(connReq.buffer);
       };
 
       ws.onmessage = (event) => {
-        const data = typeof event.data === "string" ? event.data : `[binary ${(event.data as ArrayBuffer).byteLength}b]`;
-        log(`TICK: ${data.substring(0, 500)}`);
-
-        try {
-          ticks.push(typeof event.data === "string" ? JSON.parse(event.data) : data);
-        } catch {
-          ticks.push(data);
+        let buf: Uint8Array;
+        if (event.data instanceof ArrayBuffer) {
+          buf = new Uint8Array(event.data);
+        } else if (typeof event.data === "string") {
+          log(`TEXT message (unexpected): ${event.data.substring(0, 200)}`);
+          return;
+        } else {
+          log(`Unknown message type`);
+          return;
         }
 
-        if (ticks.length >= MAX_TICKS) {
-          log(`Collected ${MAX_TICKS} ticks, closing`);
-          clearTimeout(timeout);
-          ws.close();
-          resolve({ connected: true });
+        const parsed = parseMessage(buf, log);
+        log(`MSG type=${parsed.type} len=${buf.length}`);
+
+        if (parsed.type === CONNECTION_TYPE) {
+          const connData = parsed.data as { status: string };
+          log(`Connection response: status=${connData.status}`);
+
+          if (connData.status === "K") {
+            authenticated = true;
+            // Send subscribe for NIFTY index
+            const subReq = buildSubscribeRequest([`${INDEX_PREFIX}|26000`]);
+            log(`Sending subscribe: ${subReq.length} bytes for if|26000`);
+            ws.send(subReq.buffer);
+          } else {
+            log(`Connection rejected: status=${connData.status}`);
+            errors.push(`Connection rejected: ${connData.status}`);
+            clearTimeout(timeout);
+            ws.close();
+            resolve({ connected: false });
+          }
+          return;
         }
+
+        if (parsed.type === DATA_TYPE) {
+          const tickData = parsed.data as Record<string, unknown>[];
+          if (tickData && tickData.length > 0) {
+            for (const t of tickData) {
+              log(`TICK: ${JSON.stringify(t)}`);
+              ticks.push(t);
+            }
+            // Send ACK
+            ws.send(buildAckRequest().buffer);
+          }
+
+          if (ticks.length >= MAX_TICKS) {
+            log(`Collected ${MAX_TICKS} ticks, closing`);
+            clearTimeout(timeout);
+            ws.close();
+            resolve({ connected: true });
+          }
+          return;
+        }
+
+        log(`Other message type=${parsed.type}: ${JSON.stringify(parsed.data).substring(0, 200)}`);
       };
 
       ws.onerror = (event) => {
