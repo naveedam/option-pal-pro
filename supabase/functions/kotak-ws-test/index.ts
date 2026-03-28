@@ -8,7 +8,14 @@ const corsHeaders = {
 
 const WS_URL = "wss://mlhsm.kotaksecurities.com";
 const MAX_TICKS = 5;
-const TIMEOUT_MS = 15_000;
+const TIMEOUT_MS = 30_000; // increased to 30s for slow feeds
+
+// All scrip formats to try — server silently ignores wrong ones
+const SCRIP_FORMATS = [
+  ["if|26000"],                          // index prefix (SDK default)
+  ["nse_cm|26000"],                      // exchange segment prefix
+  ["if|NIFTY 50", "if|Nifty 50"],       // name-based index
+];
 
 // Protocol constants (from Kotak Neo Python SDK HSWebSocketLib.py)
 const CONNECTION_TYPE = 1;
