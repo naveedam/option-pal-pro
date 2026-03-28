@@ -1,59 +1,68 @@
 
 
-## Fix: Kotak WebSocket Requires Binary Protocol Handshake
+## Fix: Binary Protocol Format Mismatch Causing Connection Rejection
 
-### Root Cause
+### Root Cause (from SDK source code analysis)
 
-The edge function sends a **JSON text** subscribe message, but the Kotak HSM WebSocket server uses a **custom binary protocol**. The SDK source code (`HSWebSocketLib.py`) confirms:
+The server responds with `00 06 01 01 01 00 01 4e` — the last byte `4e` = ASCII "N" = NOT_OK. The connection is rejected because our binary frame format is wrong.
 
-1. After WebSocket opens, the client must send a **binary connection request** containing `access_token` and `sid` encoded in a specific byte format (`prepareConnectionRequest2`)
-2. The server responds with a binary connection acknowledgment
-3. Only after receiving `stat: "Ok"` can subscription requests be sent — also in binary format (`prepareSubsUnSubsRequest`)
-4. All messages use opcode `0x2` (binary), not text
+Comparing our implementation against the actual SDK `prepareConnectionRequest2`:
 
-The current code sends `{"type": "subscribe", ...}` as JSON text — the server accepts the WebSocket connection but ignores all text-frame messages, resulting in 0 ticks and a timeout.
+**SDK format:**
+```text
+[2: payload_len] [1: CONNECTION_TYPE=1] [1: field_count=3]
+  [1: field_id=1] [2: jwt_len] [jwt_bytes]
+  [1: field_id=2] [2: redis_len] [redis_bytes]
+  [1: field_id=3] [2: src_len] [src_bytes]
+```
+
+**Our current format (broken):**
+```text
+[2: payload_len] [1: CONNECTION_TYPE=1]
+  [2: jwt_len] [jwt_bytes]
+  [2: sid_len] [sid_bytes]
+  [2: src_len] [src_bytes]
+```
+
+We are missing:
+1. The **field count byte** (`3`) after the type byte
+2. **Field identifier bytes** (`1`, `2`, `3`) before each field's length
+
+Additionally:
+- Our `ACK_TYPE = 9` is wrong — SDK defines `ACK_TYPE = 3` (9 is SNAPSHOT)
+- Our subscribe format is wrong — SDK uses `getScripByteArray` with a `[2-byte scrip_count][1-byte scrip_len][scrip_bytes]` structure plus field IDs and channel number
+- Our response parser reads status from byte 3, but the response `00 06 01 01 01 00 01 4e` has the actual status at a different offset
 
 ### Plan
 
-**Update `supabase/functions/kotak-ws-test/index.ts`** to implement the SDK's binary protocol:
+**Rewrite `supabase/functions/kotak-ws-test/index.ts`** binary helpers to match SDK exactly:
 
-**Step 1 — Binary connection handshake**
-After `ws.onopen`, build and send a binary connection request containing:
-- `access_token` (as JWT field)
-- `session_token` / sid (as redis key field)
-- Source identifier `"JS_API"`
+**1. Fix `buildConnectionRequest`** — Add field count byte (3) and field ID bytes (1, 2, 3) before each field, using the `ByteData` pattern from SDK's `prepareConnectionRequest2`
 
-Port the `prepareConnectionRequest2(jwt, redisKey)` function from the Python SDK to TypeScript. This creates a byte array with a specific header format.
+**2. Fix `buildSubscribeRequest`** — Port SDK's `prepareSubsUnSubsRequest` exactly:
+- Uses `getScripByteArray` which formats scrips as `[2-byte count][1-byte len + scrip_bytes per scrip]`
+- Includes field IDs (1 for scrips, 2 for channel), field count (2)
+- Requires channel number parameter (default 1)
 
-**Step 2 — Parse binary connection response**
-In `ws.onmessage`, detect the connection response (binary, type byte = 1 = CONNECTION_TYPE). Parse status from it. If status is `"K"` (OK), proceed to subscribe. If `"N"` (NOT_OK), log failure and close.
+**3. Fix `buildAckRequest`** — Port SDK's `get_acknowledgement_req`:
+- ACK_TYPE = 3 (not 9)
+- Includes a counter parameter, field IDs, and 4-byte int payload
 
-**Step 3 — Binary subscribe request**
-After successful connection, build an index subscription request for NIFTY (token `26000`):
-- Port `prepareSubsUnSubsRequest` to TypeScript
-- Use `SUBSCRIBE_TYPE` (4) with `INDEX_PREFIX` ("if")
-- Scrip format: `"if|26000"` 
-- Send as binary frame
+**4. Fix response parser** — Parse the connection response correctly based on SDK's actual response structure (the status byte position depends on the response format with field IDs)
 
-**Step 4 — Parse binary tick data**
-Incoming data messages (type 6 = DATA_TYPE) contain packed binary fields. Port the `parseData` method from `HSWrapper` to extract:
-- LTP (index 2 in INDEX_MAPPING, field name "iv")
-- Change, percent change, high, low, open, close
-
-**Step 5 — Send acknowledgments**
-The server expects periodic ACK messages after receiving data batches. Port `get_acknowledgement_req` to keep the connection alive.
+**5. Fix constants** — `ACK_TYPE = 3`, keep `SUBSCRIBE_TYPE = 4`, `DATA_TYPE = 6`
 
 ### Files to modify
-- `supabase/functions/kotak-ws-test/index.ts` — rewrite to use binary protocol
+- `supabase/functions/kotak-ws-test/index.ts` — rewrite binary protocol helpers
 
 ### What stays the same
-- No frontend changes needed
-- `marketDataProvider.ts` and `useBrokerConnection.ts` already read from `kotak-ws-test`
+- No frontend changes
+- No database changes
 - Response format stays `{ connected, tickCount, ticks[], errors[], logs[] }`
 
 ### Expected result
-- Binary handshake authenticates successfully
-- Index subscription for NIFTY is accepted
-- Live tick data (LTP, change, etc.) flows back as parsed JSON
+- Connection accepted (status "K")
+- Subscription processed
+- Live tick data flows
 - `MARKET_DATA_UNAVAILABLE` resolves
 
