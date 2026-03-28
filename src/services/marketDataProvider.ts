@@ -192,58 +192,41 @@ export class MarketDataProvider {
     try {
       const result = await retryWithBackoff(
         async () => {
-          const { data, error } = await supabase.functions.invoke('kotak-ws-test');
+          const { data, error } = await supabase.functions.invoke('nse-market-data');
 
           if (error) {
             throw new Error(error.message || 'Edge function error');
           }
 
-          console.log('[MarketDataProvider] WS response', {
-            connected: data?.connected,
-            tickCount: data?.tickCount,
-            errors: data?.errors,
+          console.log('[MarketDataProvider] NSE response', {
+            success: data?.success,
+            spot: data?.data?.niftySpot,
+            chainLen: data?.data?.niftyChain?.length,
           });
 
-          if (!data?.connected || !data?.tickCount) {
-            const code = data?.error === 'NO_SESSION' ? 'NO_SESSION' : undefined;
-            if (code === 'NO_SESSION') {
-              const sessionError = new Error('No broker session') as any;
-              sessionError.isSessionError = true;
-              sessionError.code = code;
-              throw sessionError;
-            }
-            throw new Error(data?.errors?.[0] || 'WebSocket connection failed');
+          if (!data?.success || !data?.data) {
+            throw new Error(data?.error || 'NSE data unavailable');
           }
 
-          // Extract LTP from first tick
-          const tick = data.ticks?.[0];
-          let ltp = 0;
-          if (tick && typeof tick === 'object') {
-            ltp = tick.ltp ?? tick.last_traded_price ?? tick.LTP ?? 0;
-          } else if (typeof tick === 'number') {
-            ltp = tick;
-          }
-
-          console.log('[MarketDataProvider] Extracted LTP:', ltp);
-
+          const d = data.data;
           const marketData: MarketData = {
-            niftySpot: ltp,
-            sensexSpot: 0,
-            niftyChange: 0,
-            sensexChange: 0,
-            niftyPCR: 0,
-            sensexPCR: 0,
-            niftyATM: ltp > 0 ? Math.round(ltp / 50) * 50 : 0,
-            sensexATM: 0,
-            niftyChain: [],
-            sensexChain: [],
-            timestamp: Date.now(),
+            niftySpot: d.niftySpot || 0,
+            sensexSpot: d.sensexSpot || 0,
+            niftyChange: d.niftyChange || 0,
+            sensexChange: d.sensexChange || 0,
+            niftyPCR: d.niftyPCR || 0,
+            sensexPCR: d.sensexPCR || 0,
+            niftyATM: d.niftyATM || 0,
+            sensexATM: d.sensexATM || 0,
+            niftyChain: d.niftyChain || [],
+            sensexChain: d.sensexChain || [],
+            timestamp: d.timestamp || Date.now(),
           };
 
           return marketData;
         },
-        2, // max 2 retries (WS has its own timeout)
-        2000, // 2s base delay
+        2,
+        2000,
         (attempt, err) => {
           console.log(`[MarketData] Retry ${attempt}: ${err.message}`);
         },

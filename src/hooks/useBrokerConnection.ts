@@ -27,22 +27,19 @@ export function useBrokerConnection() {
           `[BrokerConnection] Market validation started (attempt ${retry + 1}/${MAX_MARKET_VALIDATION_RETRIES + 1}) auth=${stateRef.current.auth}`,
         );
 
-        const { data, error } = await supabase.functions.invoke('kotak-ws-test');
+        const { data, error } = await supabase.functions.invoke('nse-market-data');
 
-        console.log('[BrokerConnection] WS validation response', {
+        console.log('[BrokerConnection] NSE validation response', {
           auth: stateRef.current.auth,
-          connected: data?.connected,
-          tickCount: data?.tickCount,
-          errors: data?.errors,
+          success: data?.success,
+          spot: data?.data?.niftySpot,
         });
 
         if (error) throw new Error(error.message || 'Market validation failed');
 
-        if (data?.connected && data?.tickCount > 0) {
-          const tick = data.ticks?.[0];
-          const price = typeof tick === 'object' ? (tick?.ltp ?? tick?.last_traded_price ?? 'n/a') : tick;
+        if (data?.success && data?.data?.niftySpot > 0) {
           console.log(
-            `[BrokerConnection] Market validation result: success via WebSocket price=${price}`,
+            `[BrokerConnection] Market validation success: NIFTY=${data.data.niftySpot}`,
           );
 
           setState((prev) => ({
