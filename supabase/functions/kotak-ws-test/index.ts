@@ -315,6 +315,35 @@ Deno.serve(async (req) => {
 
       let ws: WebSocket;
       let authenticated = false;
+      let scripFormatIndex = 0;
+
+      const hexDump = (buf: Uint8Array, maxBytes = 64): string => {
+        const slice = buf.slice(0, maxBytes);
+        return Array.from(slice).map(b => b.toString(16).padStart(2, '0')).join(' ');
+      };
+
+      const sendNextSubscription = () => {
+        if (scripFormatIndex >= SCRIP_FORMATS.length) {
+          log(`All scrip formats tried, waiting for data...`);
+          return;
+        }
+        const scrips = SCRIP_FORMATS[scripFormatIndex];
+        const subReq = buildSubscribeRequest(scrips);
+        log(`Subscribe attempt ${scripFormatIndex + 1}: scrips=${JSON.stringify(scrips)} (${subReq.length} bytes)`);
+        log(`Subscribe hex: ${hexDump(subReq)}`);
+        ws.send(subReq.buffer);
+        scripFormatIndex++;
+
+        // Try next format after a delay if no data arrives
+        if (scripFormatIndex < SCRIP_FORMATS.length) {
+          setTimeout(() => {
+            if (ticks.length === 0 && authenticated) {
+              log(`No ticks from format ${scripFormatIndex}, trying next...`);
+              sendNextSubscription();
+            }
+          }, 5000);
+        }
+      };
 
       try {
         log(`Connecting to WebSocket: ${WS_URL}`);
@@ -332,6 +361,7 @@ Deno.serve(async (req) => {
         log("WebSocket OPEN — sending binary connection request");
         const connReq = buildConnectionRequest(session.access_token!, sid);
         log(`Connection request: ${connReq.length} bytes`);
+        log(`ConnReq hex: ${hexDump(connReq, 32)}`);
         ws.send(connReq.buffer);
       };
 
@@ -340,28 +370,28 @@ Deno.serve(async (req) => {
         if (event.data instanceof ArrayBuffer) {
           buf = new Uint8Array(event.data);
         } else if (typeof event.data === "string") {
-          log(`TEXT message (unexpected): ${event.data.substring(0, 200)}`);
+          log(`TEXT message: ${event.data.substring(0, 500)}`);
           return;
         } else {
-          log(`Unknown message type`);
+          log(`Unknown message type: ${typeof event.data}`);
           return;
         }
 
+        log(`RAW MSG ${buf.length}b hex: ${hexDump(buf)}`);
+
         const parsed = parseMessage(buf, log);
-        log(`MSG type=${parsed.type} len=${buf.length}`);
+        log(`PARSED type=${parsed.type} data=${JSON.stringify(parsed.data).substring(0, 300)}`);
 
         if (parsed.type === CONNECTION_TYPE) {
           const connData = parsed.data as { status: string };
-          log(`Connection response: status=${connData.status}`);
+          log(`Connection response: status="${connData.status}"`);
 
           if (connData.status === "K") {
             authenticated = true;
-            // Send subscribe for NIFTY index
-            const subReq = buildSubscribeRequest([`${INDEX_PREFIX}|26000`]);
-            log(`Sending subscribe: ${subReq.length} bytes for if|26000`);
-            ws.send(subReq.buffer);
+            log("AUTH SUCCESS — sending first subscription");
+            sendNextSubscription();
           } else {
-            log(`Connection rejected: status=${connData.status}`);
+            log(`Connection REJECTED: status="${connData.status}"`);
             errors.push(`Connection rejected: ${connData.status}`);
             clearTimeout(timeout);
             ws.close();
@@ -379,6 +409,7 @@ Deno.serve(async (req) => {
             }
             // Send ACK
             ws.send(buildAckRequest().buffer);
+            log(`ACK sent after ${tickData.length} ticks`);
           }
 
           if (ticks.length >= MAX_TICKS) {
@@ -390,7 +421,7 @@ Deno.serve(async (req) => {
           return;
         }
 
-        log(`Other message type=${parsed.type}: ${JSON.stringify(parsed.data).substring(0, 200)}`);
+        log(`Other message type=${parsed.type}: ${JSON.stringify(parsed.data).substring(0, 300)}`);
       };
 
       ws.onerror = (event) => {
@@ -400,7 +431,7 @@ Deno.serve(async (req) => {
       };
 
       ws.onclose = (event) => {
-        log(`WebSocket CLOSE code=${event.code} reason=${event.reason}`);
+        log(`WebSocket CLOSE code=${event.code} reason="${event.reason}"`);
         clearTimeout(timeout);
         resolve({ connected: ticks.length > 0, closeCode: event.code, closeReason: event.reason });
       };
