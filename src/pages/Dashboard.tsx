@@ -16,7 +16,7 @@ import { useMarketData } from '@/hooks/useMarketData';
 import { useBrokerConnection } from '@/hooks/useBrokerConnection';
 import { useTradeStore } from '@/hooks/useTradeStore';
 import { supabase } from '@/integrations/supabase/client';
-import { isBrokerAuthenticated, isBrokerFullyConnected, isMarketDataConnected } from '@/services/brokerSession';
+import { isBrokerAuthenticated, isBrokerFullyConnected } from '@/services/brokerSession';
 import { AlertTriangle, LogOut, Plug } from 'lucide-react';
 
 const Dashboard = () => {
@@ -32,7 +32,7 @@ const Dashboard = () => {
     riskSettings, setRiskSettings, riskLimitReached,
     executePaperTrade, validateRiskLimits, addLivePosition,
     exitPosition, dismissSignal, feedHealth, retryFeed,
-  } = useMarketData(isPaperTrading, isMarketDataConnected(broker));
+  } = useMarketData(isPaperTrading, true);
 
   const openBrokerDialog = useCallback(() => setBrokerDialogOpen(true), []);
 
@@ -114,62 +114,8 @@ const Dashboard = () => {
     }
 
     // Broker not connected
-    if (!isBrokerAuthenticated(broker) && !marketData) {
-      return (
-        <div className="h-screen flex flex-col items-center justify-center bg-background gap-4">
-          <Plug className="w-10 h-10 text-warning" />
-          <div className="text-foreground font-mono text-sm text-center">
-            Not logged in
-          </div>
-          <p className="text-muted-foreground text-xs text-center max-w-sm">
-            Connect your Kotak Neo broker to authenticate your trading session.
-          </p>
-          <Button variant="default" onClick={openBrokerDialog} className="gap-2">
-            <Plug className="w-4 h-4" /> Connect Kotak Neo
-          </Button>
-          <Button variant="ghost" size="sm" onClick={handleLogout} className="text-muted-foreground text-xs">
-            Sign out
-          </Button>
-        </div>
-      );
-    }
-
-    if (isBrokerAuthenticated(broker) && !isMarketDataConnected(broker)) {
-      return (
-        <div className="h-screen flex flex-col items-center justify-center bg-background gap-4">
-          <AlertTriangle className="w-10 h-10 text-warning" />
-          <div className="text-warning font-mono text-sm text-center">
-            Market feed unavailable
-          </div>
-          <p className="text-muted-foreground text-xs text-center max-w-sm">
-            {broker.marketDataError || 'Authentication succeeded, but market data validation failed.'}
-          </p>
-          <div className="flex gap-3">
-            <Button
-              variant="default"
-              size="sm"
-              onClick={async () => {
-                const nextState = await broker.retryMarketValidation();
-                if (nextState.marketData === 'connected') {
-                  toast.success('Market feed connected');
-                  return;
-                }
-
-                toast.error('Market feed unavailable', {
-                  description: nextState.marketDataError || 'Retry failed. Reconnect broker if the issue persists.',
-                });
-              }}
-            >
-              Retry Market Feed
-            </Button>
-            <Button variant="outline" size="sm" onClick={openBrokerDialog} className="gap-2">
-              <Plug className="w-4 h-4" /> Reconnect Broker
-            </Button>
-          </div>
-          <Button variant="ghost" size="sm" onClick={handleLogout} className="text-muted-foreground text-xs">Sign out</Button>
-        </div>
-      );
-    }
+    // Note: Market data comes from NSE API independently of broker connection.
+    // Broker connection is only needed for live trading.
 
     // Feed error (API error, not session)
     if (!marketData && feedHealth.status === 'error') {
