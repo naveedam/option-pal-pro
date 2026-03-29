@@ -1,4 +1,4 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// NSE Market Data - public data, no auth required
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -92,31 +92,6 @@ Deno.serve(async (req) => {
   const headers = { ...corsHeaders, "Content-Type": "application/json" };
 
   try {
-    // Auth check
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers,
-      });
-    }
-
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } },
-    );
-
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-    if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers,
-      });
-    }
 
     // Check cache
     if (cache && Date.now() - cache.timestamp < CACHE_TTL_MS) {
