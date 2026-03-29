@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.kotak-ws-test]
 verify_jwt = false
+
+[functions.nse-market-data]
+verify_jwt = false
