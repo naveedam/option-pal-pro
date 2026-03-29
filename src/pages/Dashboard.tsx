@@ -17,7 +17,7 @@ import { useBrokerConnection } from '@/hooks/useBrokerConnection';
 import { useTradeStore } from '@/hooks/useTradeStore';
 import { supabase } from '@/integrations/supabase/client';
 import { isBrokerAuthenticated, isBrokerFullyConnected } from '@/services/brokerSession';
-import { AlertTriangle, LogOut, Plug } from 'lucide-react';
+import { LogOut, Plug } from 'lucide-react';
 
 const Dashboard = () => {
   const [isPaperTrading, setIsPaperTrading] = useState(true);
