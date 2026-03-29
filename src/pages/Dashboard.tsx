@@ -128,11 +128,8 @@ const Dashboard = () => {
             {feedHealth.errorMessage || 'Unable to connect to market data feed.'}
           </p>
           <div className="flex gap-3">
-            <Button variant="default" size="sm" onClick={() => { retryFeed(); broker.retryMarketValidation(); }}>
+            <Button variant="default" size="sm" onClick={() => retryFeed()}>
               Retry Connection
-            </Button>
-            <Button variant="outline" size="sm" onClick={openBrokerDialog}>
-              Reconnect Broker
             </Button>
           </div>
           <Button variant="ghost" size="sm" onClick={handleLogout} className="text-muted-foreground text-xs">
