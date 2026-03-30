@@ -299,11 +299,18 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
   });
 
   const feedRef = useRef<KotakMarketFeed | null>(null);
+  const priceHistoryRef = useRef<number[]>([]);
 
   const handleMarketData = useCallback((data: MarketData) => {
     setMarketData(data);
+    // Update rolling price history (max 20 entries)
+    if (data.niftySpot > 0) {
+      const history = priceHistoryRef.current;
+      history.push(data.niftySpot);
+      if (history.length > 20) history.shift();
+    }
     if (!riskLimitReached) {
-      const newSignals = generateSignals(data);
+      const newSignals = generateSignals(data, priceHistoryRef.current);
       if (newSignals.length > 0) {
         setSignals(prev => [...newSignals, ...prev].slice(0, 20));
       }
