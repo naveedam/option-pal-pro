@@ -275,6 +275,38 @@ function generatePriceActionSignals(data: MarketData, priceHistory: number[]): T
     });
   }
 
+  // Momentum: last 3 prices show consistent directional move > 0.1%
+  if (priceHistory.length >= 3) {
+    const last3 = priceHistory.slice(-3);
+    const allRising = last3[2] > last3[1] && last3[1] > last3[0];
+    const allFalling = last3[2] < last3[1] && last3[1] < last3[0];
+    const pctMove = Math.abs((last3[2] - last3[0]) / last3[0]) * 100;
+    if (allRising && pctMove > 0.1) {
+      signals.push({
+        id: `sig-pa-${now}-5`, index: 'NIFTY', strike: atm, optionType: 'CE',
+        strategy: 'Momentum Up',
+        reason: `3 consecutive rising ticks, +${pctMove.toFixed(2)}% move`,
+        currentPrice: niftyATM.callLTP, suggestedQty: 25, timestamp: now, strength: 'MEDIUM',
+        confidence: weightedConfidence([
+          { value: Math.min(100, pctMove * 200), weight: 3 },
+          { value: 70, weight: 1 },
+        ]),
+      });
+    }
+    if (allFalling && pctMove > 0.1) {
+      signals.push({
+        id: `sig-pa-${now}-6`, index: 'NIFTY', strike: atm, optionType: 'PE',
+        strategy: 'Momentum Down',
+        reason: `3 consecutive falling ticks, -${pctMove.toFixed(2)}% move`,
+        currentPrice: niftyATM.putLTP, suggestedQty: 25, timestamp: now, strength: 'MEDIUM',
+        confidence: weightedConfidence([
+          { value: Math.min(100, pctMove * 200), weight: 3 },
+          { value: 70, weight: 1 },
+        ]),
+      });
+    }
+  }
+
   return signals;
 }
 
@@ -303,17 +335,19 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
 
   const handleMarketData = useCallback((data: MarketData) => {
     setMarketData(data);
-    // Update rolling price history (max 20 entries)
+    // Generate signals BEFORE updating history so breakout/breakdown can trigger
+    if (!riskLimitReached) {
+      const newSignals = generateSignals(data, priceHistoryRef.current);
+
+      if (newSignals.length > 0) {
+        setSignals(prev => [...newSignals, ...prev].slice(0, 20));
+      }
+    }
+    // Update rolling price history AFTER signal generation (max 20 entries)
     if (data.niftySpot > 0) {
       const history = priceHistoryRef.current;
       history.push(data.niftySpot);
       if (history.length > 20) history.shift();
-    }
-    if (!riskLimitReached) {
-      const newSignals = generateSignals(data, priceHistoryRef.current);
-      if (newSignals.length > 0) {
-        setSignals(prev => [...newSignals, ...prev].slice(0, 20));
-      }
     }
     setPositions(prev =>
       prev.map(p => {
