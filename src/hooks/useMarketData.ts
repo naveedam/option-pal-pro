@@ -303,17 +303,19 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
 
   const handleMarketData = useCallback((data: MarketData) => {
     setMarketData(data);
-    // Update rolling price history (max 20 entries)
+    // Generate signals BEFORE updating history so breakout/breakdown can trigger
+    if (!riskLimitReached) {
+      const newSignals = generateSignals(data, priceHistoryRef.current);
+
+      if (newSignals.length > 0) {
+        setSignals(prev => [...newSignals, ...prev].slice(0, 20));
+      }
+    }
+    // Update rolling price history AFTER signal generation (max 20 entries)
     if (data.niftySpot > 0) {
       const history = priceHistoryRef.current;
       history.push(data.niftySpot);
       if (history.length > 20) history.shift();
-    }
-    if (!riskLimitReached) {
-      const newSignals = generateSignals(data, priceHistoryRef.current);
-      if (newSignals.length > 0) {
-        setSignals(prev => [...newSignals, ...prev].slice(0, 20));
-      }
     }
     setPositions(prev =>
       prev.map(p => {

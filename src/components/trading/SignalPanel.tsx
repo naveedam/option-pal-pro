@@ -81,19 +81,27 @@ export function SignalPanel({ signals, onConfirm, onDismiss, riskLimitReached }:
                 <span className="font-mono">₹{signal.currentPrice.toFixed(2)}</span>
               </div>
             </div>
+            <div className="flex items-center gap-1 mb-2">
+              <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
+                ['Breakout Buy','Breakdown Sell','Support Bounce','Resistance Rejection','Momentum Up','Momentum Down'].includes(signal.strategy)
+                  ? 'bg-signal/20 text-signal' : 'bg-accent text-accent-foreground'
+              }`}>
+                {['Breakout Buy','Breakdown Sell','Support Bounce','Resistance Rejection','Momentum Up','Momentum Down'].includes(signal.strategy) ? 'Price Action' : 'OI Analysis'}
+              </span>
+            </div>
             <p className="text-[10px] text-muted-foreground mb-2">{signal.reason}</p>
             <div className="flex items-center justify-between">
               <span className="text-[10px] text-muted-foreground font-mono">
                 Qty: {signal.suggestedQty}
               </span>
               <Button
-                variant="buy"
+                variant={signal.optionType === 'CE' ? 'buy' : 'sell'}
                 size="sm"
                 className="h-7 text-xs px-3"
                 onClick={() => onConfirm(signal)}
                 disabled={riskLimitReached}
               >
-                CONFIRM BUY
+                {signal.optionType === 'CE' ? 'BUY CE' : 'BUY PE'}
               </Button>
             </div>
           </div>
