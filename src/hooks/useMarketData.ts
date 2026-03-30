@@ -277,7 +277,7 @@ function generatePriceActionSignals(data: MarketData, priceHistory: number[]): T
 
   // Momentum: last 3 prices show consistent directional move > 0.1%
   if (history.length >= 3) {
-    const last3 = history.slice(-3);
+    const last3 = priceHistory.slice(-3);
     const allRising = last3[2] > last3[1] && last3[1] > last3[0];
     const allFalling = last3[2] < last3[1] && last3[1] < last3[0];
     const pctMove = Math.abs((last3[2] - last3[0]) / last3[0]) * 100;
