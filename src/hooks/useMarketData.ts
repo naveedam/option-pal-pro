@@ -88,7 +88,7 @@ function weightedConfidence(factors: { value: number; weight: number }[]): numbe
   return Math.max(0, Math.min(100, Math.round(weighted / totalWeight)));
 }
 
-function generateSignals(data: MarketData): TradeSignal[] {
+function generateOiSignals(data: MarketData): TradeSignal[] {
   const signals: TradeSignal[] = [];
   const now = Date.now();
   const niftyATM = data.niftyChain.find(o => o.isATM);
@@ -108,7 +108,6 @@ function generateSignals(data: MarketData): TradeSignal[] {
     : 0;
   const dealerFactor = Math.min(100, Math.abs(dealerGamma) / 50000 * 100);
 
-  // PCR Reversal
   if (data.niftyPCR < 0.8 && niftyATM.putOIChange > 0) {
     signals.push({
       id: `sig-${now}-1`, index: 'NIFTY', strike: niftyATM.strike, optionType: 'PE',
@@ -139,7 +138,6 @@ function generateSignals(data: MarketData): TradeSignal[] {
     });
   }
 
-  // Call Wall Breakdown
   if (maxCallOIStrike > 0 && data.niftySpot > maxCallOIStrike) {
     const breakFactor = Math.min(100, ((data.niftySpot - maxCallOIStrike) / 50) * 100);
     const volFactor = Math.min(100, (niftyATM.callVolume / 8000) * 100);
@@ -158,7 +156,6 @@ function generateSignals(data: MarketData): TradeSignal[] {
     });
   }
 
-  // Put Support Breakdown
   if (maxPutOIStrike > 0 && data.niftySpot < maxPutOIStrike) {
     const breakFactor = Math.min(100, ((maxPutOIStrike - data.niftySpot) / 50) * 100);
     const volFactor = Math.min(100, (niftyATM.putVolume / 8000) * 100);
@@ -177,7 +174,6 @@ function generateSignals(data: MarketData): TradeSignal[] {
     });
   }
 
-  // ATM Volatility Spike
   if (niftyATM.callVolume > 7000 && niftyATM.putVolume > 7000) {
     const volFactor = Math.min(100, ((niftyATM.callVolume + niftyATM.putVolume) / 20000) * 100);
     const isBullish = niftyATM.callVolume > niftyATM.putVolume;
@@ -198,6 +194,92 @@ function generateSignals(data: MarketData): TradeSignal[] {
   }
 
   return signals;
+}
+
+function generatePriceActionSignals(data: MarketData, priceHistory: number[]): TradeSignal[] {
+  if (priceHistory.length < 5) return [];
+  const signals: TradeSignal[] = [];
+  const now = Date.now();
+  const spot = data.niftySpot;
+  const atm = data.niftyATM;
+  const niftyATM = data.niftyChain.find(o => o.isATM);
+  if (!niftyATM || spot <= 0) return signals;
+
+  const high20 = Math.max(...priceHistory);
+  const low20 = Math.min(...priceHistory);
+  const range = high20 - low20;
+  const proximityThreshold = spot * 0.003; // 0.3%
+
+  // Trend direction from last 3 prices
+  const recent = priceHistory.slice(-3);
+  const rising = recent.length >= 2 && recent[recent.length - 1] > recent[0];
+  const falling = recent.length >= 2 && recent[recent.length - 1] < recent[0];
+
+  // Breakout Buy: spot exceeds 20-period high
+  if (spot > high20 && range > 10) {
+    signals.push({
+      id: `sig-pa-${now}-1`, index: 'NIFTY', strike: atm, optionType: 'CE',
+      strategy: 'Breakout Buy',
+      reason: `Spot ${spot.toFixed(0)} broke 20-period high ${high20.toFixed(0)}`,
+      currentPrice: niftyATM.callLTP, suggestedQty: 50, timestamp: now, strength: 'HIGH',
+      confidence: weightedConfidence([
+        { value: Math.min(100, ((spot - high20) / 20) * 100), weight: 3 },
+        { value: Math.min(100, (range / 100) * 100), weight: 2 },
+        { value: rising ? 80 : 40, weight: 1 },
+      ]),
+    });
+  }
+
+  // Breakdown Sell: spot falls below 20-period low
+  if (spot < low20 && range > 10) {
+    signals.push({
+      id: `sig-pa-${now}-2`, index: 'NIFTY', strike: atm, optionType: 'PE',
+      strategy: 'Breakdown Sell',
+      reason: `Spot ${spot.toFixed(0)} broke 20-period low ${low20.toFixed(0)}`,
+      currentPrice: niftyATM.putLTP, suggestedQty: 50, timestamp: now, strength: 'HIGH',
+      confidence: weightedConfidence([
+        { value: Math.min(100, ((low20 - spot) / 20) * 100), weight: 3 },
+        { value: Math.min(100, (range / 100) * 100), weight: 2 },
+        { value: falling ? 80 : 40, weight: 1 },
+      ]),
+    });
+  }
+
+  // Support Bounce: near low20 and rising
+  if (Math.abs(spot - low20) < proximityThreshold && rising) {
+    signals.push({
+      id: `sig-pa-${now}-3`, index: 'NIFTY', strike: atm, optionType: 'CE',
+      strategy: 'Support Bounce',
+      reason: `Spot ${spot.toFixed(0)} bouncing off support ${low20.toFixed(0)}`,
+      currentPrice: niftyATM.callLTP, suggestedQty: 25, timestamp: now, strength: 'MEDIUM',
+      confidence: weightedConfidence([
+        { value: Math.min(100, (1 - Math.abs(spot - low20) / proximityThreshold) * 100), weight: 3 },
+        { value: rising ? 80 : 30, weight: 2 },
+        { value: Math.min(100, (range / 80) * 100), weight: 1 },
+      ]),
+    });
+  }
+
+  // Resistance Rejection: near high20 and falling
+  if (Math.abs(spot - high20) < proximityThreshold && falling) {
+    signals.push({
+      id: `sig-pa-${now}-4`, index: 'NIFTY', strike: atm, optionType: 'PE',
+      strategy: 'Resistance Rejection',
+      reason: `Spot ${spot.toFixed(0)} rejected at resistance ${high20.toFixed(0)}`,
+      currentPrice: niftyATM.putLTP, suggestedQty: 25, timestamp: now, strength: 'MEDIUM',
+      confidence: weightedConfidence([
+        { value: Math.min(100, (1 - Math.abs(spot - high20) / proximityThreshold) * 100), weight: 3 },
+        { value: falling ? 80 : 30, weight: 2 },
+        { value: Math.min(100, (range / 80) * 100), weight: 1 },
+      ]),
+    });
+  }
+
+  return signals;
+}
+
+function generateSignals(data: MarketData, priceHistory: number[]): TradeSignal[] {
+  return [...generateOiSignals(data), ...generatePriceActionSignals(data, priceHistory)];
 }
 
 // ─── Hook ────────────────────────────────────────────────────────────
