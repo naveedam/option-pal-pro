@@ -1,68 +1,50 @@
 
 
-## Fix: Binary Protocol Format Mismatch Causing Connection Rejection
+## Enhance Market Data: Real OI Attempt + Price-Action Signals
 
-### Root Cause (from SDK source code analysis)
+### Constraint: NSE OI Access
 
-The server responds with `00 06 01 01 01 00 01 4e` — the last byte `4e` = ASCII "N" = NOT_OK. The connection is rejected because our binary frame format is wrong.
+The NSE option chain API (`nseindia.com/api/option-chain-indices`) was already tested and **blocks requests from non-Indian IPs**. The edge functions run in EU. This means direct NSE OI fetching will fail with 403.
 
-Comparing our implementation against the actual SDK `prepareConnectionRequest2`:
+**Approach:** Attempt NSE OI as a best-effort overlay. If it fails (expected), fall back to synthetic OI silently. This keeps the architecture ready for when a proxy or alternative source becomes available.
 
-**SDK format:**
-```text
-[2: payload_len] [1: CONNECTION_TYPE=1] [1: field_count=3]
-  [1: field_id=1] [2: jwt_len] [jwt_bytes]
-  [1: field_id=2] [2: redis_len] [redis_bytes]
-  [1: field_id=3] [2: src_len] [src_bytes]
-```
+### Part 1: NSE OI Overlay (Best-Effort)
 
-**Our current format (broken):**
-```text
-[2: payload_len] [1: CONNECTION_TYPE=1]
-  [2: jwt_len] [jwt_bytes]
-  [2: sid_len] [sid_bytes]
-  [2: src_len] [src_bytes]
-```
+**Modify `supabase/functions/nse-market-data/index.ts`**
 
-We are missing:
-1. The **field count byte** (`3`) after the type byte
-2. **Field identifier bytes** (`1`, `2`, `3`) before each field's length
+- Add `fetchNseOptionChain()` that tries the NSE API with proper headers/cookies
+- If it succeeds, merge real OI into the synthetic chain: `callOI: nseRow?.CE?.openInterest ?? syntheticCallOI`
+- If it fails (403/timeout), log the failure and return synthetic data unchanged
+- Add a `source` field per chain row: `"nse"` or `"synthetic"` so the UI can indicate data quality
 
-Additionally:
-- Our `ACK_TYPE = 9` is wrong — SDK defines `ACK_TYPE = 3` (9 is SNAPSHOT)
-- Our subscribe format is wrong — SDK uses `getScripByteArray` with a `[2-byte scrip_count][1-byte scrip_len][scrip_bytes]` structure plus field IDs and channel number
-- Our response parser reads status from byte 3, but the response `00 06 01 01 01 00 01 4e` has the actual status at a different offset
+### Part 2: Price-Action Signal Engine
 
-### Plan
+**Create price history tracker in `src/hooks/useMarketData.ts`**
 
-**Rewrite `supabase/functions/kotak-ws-test/index.ts`** binary helpers to match SDK exactly:
+- Maintain a rolling window of last 20 NIFTY spot prices (updated each poll cycle)
+- Compute: `high20 = max(history)`, `low20 = min(history)`, `support/resistance` zones
 
-**1. Fix `buildConnectionRequest`** — Add field count byte (3) and field ID bytes (1, 2, 3) before each field, using the `ByteData` pattern from SDK's `prepareConnectionRequest2`
+**New signal strategies added to `generateSignals()`:**
 
-**2. Fix `buildSubscribeRequest`** — Port SDK's `prepareSubsUnSubsRequest` exactly:
-- Uses `getScripByteArray` which formats scrips as `[2-byte count][1-byte len + scrip_bytes per scrip]`
-- Includes field IDs (1 for scrips, 2 for channel), field count (2)
-- Requires channel number parameter (default 1)
+| Signal | Condition | Type |
+|--------|-----------|------|
+| Breakout Buy | `spot > high20` | CE, HIGH confidence |
+| Breakdown Sell | `spot < low20` | PE, HIGH confidence |
+| Support Bounce | `spot within 0.3% of low20` and rising | CE, MEDIUM |
+| Resistance Rejection | `spot within 0.3% of high20` and falling | PE, MEDIUM |
 
-**3. Fix `buildAckRequest`** — Port SDK's `get_acknowledgement_req`:
-- ACK_TYPE = 3 (not 9)
-- Includes a counter parameter, field IDs, and 4-byte int payload
-
-**4. Fix response parser** — Parse the connection response correctly based on SDK's actual response structure (the status byte position depends on the response format with field IDs)
-
-**5. Fix constants** — `ACK_TYPE = 3`, keep `SUBSCRIBE_TYPE = 4`, `DATA_TYPE = 6`
+- Each signal includes `strategy`, `reason`, `confidence` (weighted scoring)
+- Price history is passed as a ref to avoid re-renders
 
 ### Files to modify
-- `supabase/functions/kotak-ws-test/index.ts` — rewrite binary protocol helpers
 
-### What stays the same
-- No frontend changes
-- No database changes
-- Response format stays `{ connected, tickCount, ticks[], errors[], logs[] }`
+1. `supabase/functions/nse-market-data/index.ts` — add NSE OI fetch attempt with silent fallback
+2. `src/hooks/useMarketData.ts` — add price history tracking + 4 new price-action signal strategies
 
-### Expected result
-- Connection accepted (status "K")
-- Subscription processed
-- Live tick data flows
-- `MARKET_DATA_UNAVAILABLE` resolves
+### Technical details
+
+- Price history stored as `useRef<number[]>` (max 20 entries, FIFO)
+- NSE fetch uses 3-second timeout to avoid slowing the main Yahoo response
+- `Promise.allSettled` used so NSE failure never blocks Yahoo data
+- Response adds `oiSource: "nse" | "synthetic"` field
 
