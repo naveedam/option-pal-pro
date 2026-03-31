@@ -220,6 +220,8 @@ export class MarketDataProvider {
             sensexATM: d.sensexATM || 0,
             niftyChain: d.niftyChain || [],
             sensexChain: d.sensexChain || [],
+            niftyMaxPain: d.niftyMaxPain || 0,
+            sensexMaxPain: d.sensexMaxPain || 0,
             timestamp: d.timestamp || Date.now(),
           };
 
