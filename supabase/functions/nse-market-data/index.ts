@@ -201,6 +201,9 @@ Deno.serve(async (req) => {
 
     const oiSource = niftyNseOi && niftyNseOi.size > 0 ? "nse" : "synthetic";
 
+    const niftyMaxPain = calculateMaxPain(niftyChain);
+    const sensexMaxPain = calculateMaxPain(sensexChain);
+
     const responseData = {
       success: true,
       source: "yahoo-finance-v8",
@@ -211,11 +214,13 @@ Deno.serve(async (req) => {
         niftyChange,
         niftyPCR,
         niftyChain,
+        niftyMaxPain,
         sensexSpot,
         sensexATM: sensexSpot > 0 ? Math.round(sensexSpot / 100) * 100 : 0,
         sensexChange,
         sensexPCR,
         sensexChain,
+        sensexMaxPain,
         timestamp: Date.now(),
       },
     };
