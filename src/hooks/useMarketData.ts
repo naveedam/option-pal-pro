@@ -472,5 +472,6 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
     riskSettings, setRiskSettings, riskLimitReached,
     executePaperTrade, validateRiskLimits, addLivePosition,
     exitPosition, dismissSignal, feedHealth, retryFeed,
+    autoTradeEnabled, setAutoTradeEnabled,
   };
 }
