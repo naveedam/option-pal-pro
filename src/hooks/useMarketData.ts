@@ -31,6 +31,8 @@ export interface MarketData {
   sensexATM: number;
   niftyChain: OptionData[];
   sensexChain: OptionData[];
+  niftyMaxPain: number;
+  sensexMaxPain: number;
   timestamp: number;
 }
 
