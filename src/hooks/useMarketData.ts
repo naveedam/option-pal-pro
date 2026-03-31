@@ -17,6 +17,7 @@ export interface OptionData {
   putBid: number;
   putAsk: number;
   isATM: boolean;
+  oiSource?: 'nse' | 'synthetic';
 }
 
 export interface MarketData {
