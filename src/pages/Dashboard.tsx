@@ -238,7 +238,7 @@ const Dashboard = () => {
               </TabsContent>
             </Tabs>
           </div>
-          <div className="w-[300px] flex-shrink-0">
+          <div className="w-[300px] flex-shrink-0 min-h-[200px]">
             <SignalPanel signals={signals} onConfirm={handleConfirmTrade} onDismiss={dismissSignal} riskLimitReached={riskLimitReached} />
           </div>
         </div>
