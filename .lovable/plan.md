@@ -1,31 +1,75 @@
 
 
-## Fix: Price-Action Signals Not Firing + Add Buy/Sell Buttons
+## Upgrade: Max Pain, OI Badges, Auto-Trade, Signal Panel Fixes
 
-### Root Cause: Signals Never Trigger
+### Part 1: Max Pain Calculation + Display
 
-In `useMarketData.ts` line 309, the current spot price is pushed into `priceHistoryRef` **before** `generateSignals()` is called on line 313. This means `high20 = Math.max(...history)` always includes the current spot, so `spot > high20` is **always false**. Same for `spot < low20`. The price-action engine is dead code.
+**Edge function (`supabase/functions/nse-market-data/index.ts`)**
+- Add `calculateMaxPain(chain)` — iterate all strikes, for each candidate compute total pain (call holders lose when settling above strike, put holders lose when settling below), return strike with minimum total pain
+- Add `niftyMaxPain` and `sensexMaxPain` to response payload
 
-### Fix 1: Push price history AFTER signal generation
+**Frontend (`src/hooks/useMarketData.ts`)**
+- Add `niftyMaxPain` and `sensexMaxPain` to `MarketData` interface
 
-**File: `src/hooks/useMarketData.ts`**
+**UI (`src/components/trading/AnalyticsPanels.tsx`)**
+- Add a 4th analytics card: **MAX PAIN** showing strike value, distance from spot in points and %, and directional bias (spot > maxPain = bearish pull, spot < maxPain = bullish pull)
+- Change grid from `grid-cols-3` to `grid-cols-4`
 
-Reorder lines 307-313: call `generateSignals` first using the existing history, then push the new spot price. This way the current spot can actually exceed the previous 20-period high/low.
+### Part 2: OI Source Badges in Option Chain
 
-### Fix 2: Add BUY and SELL buttons to SignalPanel
+**Frontend (`src/hooks/useMarketData.ts`)**
+- Add `oiSource?: 'nse' | 'synthetic'` to `OptionData` interface
+- Pass through from API response
 
-**File: `src/components/trading/SignalPanel.tsx`**
+**UI (`src/components/trading/OptionChainTable.tsx`)**
+- Add a small dot indicator next to OI values: green dot for real NSE data, yellow dot for synthetic
+- Add legend entry: `🟢=Real OI  🟡=Est`
 
-Currently every signal shows "CONFIRM BUY" regardless of option type. Change to:
-- CE signals: show green **BUY CE** button (variant `buy`)
-- PE signals: show red **SELL / BUY PE** button (variant `sell`)
-- Add a strategy-type badge distinguishing OI-based vs Price-Action signals (e.g. tag showing "Price Action" or "OI Analysis")
+### Part 3: Auto-Trade Execution
 
-### Fix 3: Lower breakout threshold for realistic triggering
+**Frontend (`src/hooks/useMarketData.ts`)**
+- Add `autoTradeEnabled` state (default `false`)
+- In `handleMarketData`, after generating signals: if `autoTradeEnabled && !isPaperTrading`, filter signals with `confidence > 75` and `strength === 'HIGH'`, call an `onAutoTrade` callback
+- Safety checks: respect existing risk limits (daily loss, max trades, cooldown)
 
-The current condition `range > 10` is fine, but with 5-second polling and only 20 samples (~100 seconds of data), breakouts are rare. Add a `Momentum` signal that fires when recent 3 prices show consistent directional movement > 0.1% — this provides more frequent actionable signals.
+**Dashboard (`src/pages/Dashboard.tsx`)**
+- Add auto-trade toggle switch in header (only visible when broker connected + live mode)
+- Wire auto-trade callback to invoke `kotak-place-order` edge function (same flow as manual confirm)
+- Show toast for each auto-executed trade
+- Add `autoTradeEnabled` to `useMarketData` hook export
+
+### Part 4: Fix Signal Panel Visibility
+
+**Dashboard (`src/pages/Dashboard.tsx`)**
+- The signal panel container at line 229 has `w-[300px]` but sits inside a `flex min-h-0` parent — if no signals exist and the panel has no min-height, it can collapse
+- Add `min-h-[200px]` to the signal panel wrapper
+- Ensure the signal panel's parent flex container uses `overflow-visible` or proper `min-h-0` cascading
+
+**SignalPanel (`src/components/trading/SignalPanel.tsx`)**
+- Already has buy/sell buttons from previous work — verify they render correctly
+- Add `min-h-[200px]` to the panel root to prevent collapse when empty
+- Ensure `overflow-y: auto` and `max-h` work together properly inside the flex layout
+
+### Part 5: Signal Type Labels + Strength Colors
+
+Already partially implemented. Verify and ensure:
+- Strategy badges ("Price Action" / "OI Analysis") render in each signal card
+- Confidence badge colors: ≥75 green, ≥50 yellow, <50 gray (already in `ConfidenceBadge`)
+- Strength badge: HIGH = green bg, MEDIUM = yellow bg (already implemented)
 
 ### Files to modify
-1. `src/hooks/useMarketData.ts` — reorder history push; add momentum signal
-2. `src/components/trading/SignalPanel.tsx` — CE/PE-aware buy/sell buttons; strategy type badge
+
+1. `supabase/functions/nse-market-data/index.ts` — add `calculateMaxPain()`, include in response
+2. `src/hooks/useMarketData.ts` — add `maxPain` + `oiSource` to types, add `autoTradeEnabled` state
+3. `src/components/trading/AnalyticsPanels.tsx` — add Max Pain card, 4-col grid
+4. `src/components/trading/OptionChainTable.tsx` — OI source dot indicators
+5. `src/components/trading/SignalPanel.tsx` — min-height fix
+6. `src/pages/Dashboard.tsx` — auto-trade toggle, wire auto-execution, signal panel min-height
+
+### Technical details
+
+- Max Pain formula: for each candidate strike S, pain = Σ max(0, S - row.strike) × row.callOI + Σ max(0, row.strike - S) × row.putOI; pick S with minimum pain
+- Auto-trade only fires when: `autoTradeEnabled && !isPaperTrading && broker.trading === 'connected' && signal.confidence > 75 && riskLimits.ok`
+- Auto-traded signals get auto-dismissed from the panel after execution
+- OI source field already exists in edge function response — just needs to be threaded through to the frontend types
 
