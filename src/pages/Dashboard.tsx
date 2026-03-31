@@ -220,7 +220,7 @@ const Dashboard = () => {
         </div>
 
         <div className="px-4 pb-2 flex-shrink-0">
-          <AnalyticsPanels chain={activeChain} spotPrice={activeSpot} index={selectedIndex} />
+          <AnalyticsPanels chain={activeChain} spotPrice={activeSpot} index={selectedIndex} maxPain={selectedIndex === 'NIFTY' ? marketData.niftyMaxPain : marketData.sensexMaxPain} />
         </div>
 
         <div className="flex-1 flex min-h-0 px-4 pb-3 gap-3">
