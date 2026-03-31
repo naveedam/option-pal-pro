@@ -101,6 +101,25 @@ const Dashboard = () => {
 
   const handleLogout = async () => { await supabase.auth.signOut(); };
 
+  // Auto-trade: execute high-confidence signals automatically
+  const autoTradeProcessedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!autoTradeEnabled || isPaperTrading || broker.trading !== 'connected') return;
+    const riskCheck = validateRiskLimits();
+    if (!riskCheck.ok) return;
+
+    for (const signal of signals) {
+      if (autoTradeProcessedRef.current.has(signal.id)) continue;
+      if (signal.confidence > 75 && signal.strength === 'HIGH') {
+        autoTradeProcessedRef.current.add(signal.id);
+        handleConfirmTrade(signal);
+        toast.info(`⚡ Auto-trade executed: ${signal.index} ${signal.strike} ${signal.optionType}`, {
+          description: `Strategy: ${signal.strategy} | Confidence: ${signal.confidence}%`,
+        });
+      }
+    }
+  }, [signals, autoTradeEnabled, isPaperTrading, broker.trading]);
+
   // Determine which content to render
   const renderContent = () => {
     // Loading broker status
