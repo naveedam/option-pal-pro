@@ -1,24 +1,25 @@
 import { useMemo } from 'react';
-import type { OptionData } from '@/hooks/useMarketData';
+import type { OptionData, MarketData } from '@/hooks/useMarketData';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { AlertTriangle, BarChart3, Flame } from 'lucide-react';
+import { AlertTriangle, BarChart3, Flame, Target } from 'lucide-react';
 
 interface AnalyticsPanelsProps {
   chain: OptionData[];
   spotPrice: number;
   index: string;
+  maxPain?: number;
 }
 
 interface GammaWallData {
   strike: number;
   combinedOI: number;
-  proximity: number; // distance from spot as %
+  proximity: number;
   warning: boolean;
 }
 
 interface DealerData {
   strike: number;
-  netPosition: number; // putOI - callOI
+  netPosition: number;
 }
 
 interface OIChangeData {
@@ -56,26 +57,29 @@ function computeOIChanges(chain: OptionData[]): { majorCallWriting: number; majo
   return { majorCallWriting: maxCallStrike, majorPutWriting: maxPutStrike, topChanges };
 }
 
-export function AnalyticsPanels({ chain, spotPrice, index }: AnalyticsPanelsProps) {
+export function AnalyticsPanels({ chain, spotPrice, index, maxPain = 0 }: AnalyticsPanelsProps) {
   const gamma = useMemo(() => computeGammaWall(chain, spotPrice), [chain, spotPrice]);
   const dealer = useMemo(() => computeDealerPositioning(chain), [chain]);
   const oiChanges = useMemo(() => computeOIChanges(chain), [chain]);
 
-  // Overall dealer gamma: sum of net positions
   const totalNet = useMemo(() => dealer.reduce((s, d) => s + d.netPosition, 0), [dealer]);
   const dealerGammaLabel = totalNet > 0 ? 'Long Gamma' : 'Short Gamma';
   const dealerGammaColor = totalNet > 0 ? 'text-profit' : 'text-loss';
 
-  // Top 5 dealer positioned strikes
   const topDealerStrikes = useMemo(() =>
     [...dealer].sort((a, b) => Math.abs(b.netPosition) - Math.abs(a.netPosition)).slice(0, 5),
     [dealer]
   );
 
+  const maxPainDistance = spotPrice > 0 && maxPain > 0 ? maxPain - spotPrice : 0;
+  const maxPainPct = spotPrice > 0 && maxPain > 0 ? ((maxPainDistance) / spotPrice * 100) : 0;
+  const maxPainBias = maxPainDistance > 0 ? 'Bullish Pull' : maxPainDistance < 0 ? 'Bearish Pull' : 'Neutral';
+  const maxPainBiasColor = maxPainDistance > 0 ? 'text-profit' : maxPainDistance < 0 ? 'text-loss' : 'text-muted-foreground';
+
   if (chain.length === 0) return null;
 
   return (
-    <div className="grid grid-cols-3 gap-2">
+    <div className="grid grid-cols-4 gap-2">
       {/* Gamma Wall */}
       <Card className="bg-card border-border">
         <CardHeader className="py-2 px-3">
@@ -175,6 +179,38 @@ export function AnalyticsPanels({ chain, spotPrice, index }: AnalyticsPanelsProp
                 </span>
               </div>
             ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Max Pain */}
+      <Card className="bg-card border-border">
+        <CardHeader className="py-2 px-3">
+          <CardTitle className="text-xs font-mono flex items-center gap-1.5">
+            <Target className="w-3 h-3 text-signal" />
+            MAX PAIN
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="px-3 pb-2 space-y-1">
+          <div className="flex justify-between text-xs font-mono">
+            <span className="text-muted-foreground">Strike</span>
+            <span className="text-foreground font-bold">{maxPain || '—'}</span>
+          </div>
+          <div className="flex justify-between text-xs font-mono">
+            <span className="text-muted-foreground">Distance</span>
+            <span className={maxPainBiasColor}>
+              {maxPainDistance > 0 ? '+' : ''}{maxPainDistance.toFixed(0)} pts
+            </span>
+          </div>
+          <div className="flex justify-between text-xs font-mono">
+            <span className="text-muted-foreground">% Away</span>
+            <span className={maxPainBiasColor}>
+              {maxPainPct > 0 ? '+' : ''}{maxPainPct.toFixed(2)}%
+            </span>
+          </div>
+          <div className="flex justify-between text-xs font-mono mt-1">
+            <span className="text-muted-foreground">Bias</span>
+            <span className={maxPainBiasColor}>{maxPainBias}</span>
           </div>
         </CardContent>
       </Card>

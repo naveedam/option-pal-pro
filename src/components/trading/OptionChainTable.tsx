@@ -127,7 +127,11 @@ export function OptionChainTable({ chain, index }: OptionChainTableProps) {
                   </td>
                   <td className="px-2 py-1 text-right relative">
                     <HeatCell intensity={analysis?.putHeatIntensity || 0} side="put" />
-                    <span className="relative">{row.putOI.toLocaleString()}</span>
+                    <span className="relative">
+                      {row.putOI.toLocaleString()}
+                      {row.oiSource === 'nse' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-profit ml-1 align-middle" title="Real NSE OI" />}
+                      {row.oiSource === 'synthetic' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-warning ml-1 align-middle" title="Estimated OI" />}
+                    </span>
                   </td>
                   {/* Put smart money labels */}
                   <td className="px-1 py-1 text-center relative">
