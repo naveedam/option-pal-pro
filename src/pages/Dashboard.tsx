@@ -182,6 +182,16 @@ const Dashboard = () => {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Auto-trade toggle - only when broker connected + live mode */}
+            {!isPaperTrading && isBrokerFullyConnected(broker) && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono text-signal">⚡ AUTO</span>
+                <Switch
+                  checked={autoTradeEnabled}
+                  onCheckedChange={setAutoTradeEnabled}
+                />
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <span className={`text-xs font-mono ${isPaperTrading ? 'text-warning' : 'text-loss'}`}>
                 {isPaperTrading ? '📝 PAPER' : '🔴 LIVE'}
@@ -195,6 +205,7 @@ const Dashboard = () => {
                     return;
                   }
                   setIsPaperTrading(!checked);
+                  if (!checked) setAutoTradeEnabled(false);
                 }}
               />
             </div>
