@@ -167,6 +167,12 @@ export function OptionChainTable({ chain, index }: OptionChainTableProps) {
         <span className="text-loss">SB=Short Buildup</span>
         <span className="text-warning">SC=Short Covering</span>
         <span className="text-warning">LU=Long Unwinding</span>
+        <span className="border-l border-border pl-3 ml-1">
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-profit mr-0.5 align-middle" />Real OI
+        </span>
+        <span>
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-warning mr-0.5 align-middle" />Est
+        </span>
       </div>
     </div>
   );
