@@ -1,4 +1,4 @@
-import { useState, useCallback, memo } from 'react';
+import { useState, useCallback, memo, useEffect, useRef } from 'react';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -32,6 +32,7 @@ const Dashboard = () => {
     riskSettings, setRiskSettings, riskLimitReached,
     executePaperTrade, validateRiskLimits, addLivePosition,
     exitPosition, dismissSignal, feedHealth, retryFeed,
+    autoTradeEnabled, setAutoTradeEnabled,
   } = useMarketData(isPaperTrading, true);
 
   const openBrokerDialog = useCallback(() => setBrokerDialogOpen(true), []);
@@ -99,6 +100,25 @@ const Dashboard = () => {
   };
 
   const handleLogout = async () => { await supabase.auth.signOut(); };
+
+  // Auto-trade: execute high-confidence signals automatically
+  const autoTradeProcessedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!autoTradeEnabled || isPaperTrading || broker.trading !== 'connected') return;
+    const riskCheck = validateRiskLimits();
+    if (!riskCheck.ok) return;
+
+    for (const signal of signals) {
+      if (autoTradeProcessedRef.current.has(signal.id)) continue;
+      if (signal.confidence > 75 && signal.strength === 'HIGH') {
+        autoTradeProcessedRef.current.add(signal.id);
+        handleConfirmTrade(signal);
+        toast.info(`⚡ Auto-trade executed: ${signal.index} ${signal.strike} ${signal.optionType}`, {
+          description: `Strategy: ${signal.strategy} | Confidence: ${signal.confidence}%`,
+        });
+      }
+    }
+  }, [signals, autoTradeEnabled, isPaperTrading, broker.trading]);
 
   // Determine which content to render
   const renderContent = () => {
@@ -181,6 +201,16 @@ const Dashboard = () => {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Auto-trade toggle - only when broker connected + live mode */}
+            {!isPaperTrading && isBrokerFullyConnected(broker) && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono text-signal">⚡ AUTO</span>
+                <Switch
+                  checked={autoTradeEnabled}
+                  onCheckedChange={setAutoTradeEnabled}
+                />
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <span className={`text-xs font-mono ${isPaperTrading ? 'text-warning' : 'text-loss'}`}>
                 {isPaperTrading ? '📝 PAPER' : '🔴 LIVE'}
@@ -194,6 +224,7 @@ const Dashboard = () => {
                     return;
                   }
                   setIsPaperTrading(!checked);
+                  if (!checked) setAutoTradeEnabled(false);
                 }}
               />
             </div>
@@ -208,7 +239,7 @@ const Dashboard = () => {
         </div>
 
         <div className="px-4 pb-2 flex-shrink-0">
-          <AnalyticsPanels chain={activeChain} spotPrice={activeSpot} index={selectedIndex} />
+          <AnalyticsPanels chain={activeChain} spotPrice={activeSpot} index={selectedIndex} maxPain={selectedIndex === 'NIFTY' ? marketData.niftyMaxPain : marketData.sensexMaxPain} />
         </div>
 
         <div className="flex-1 flex min-h-0 px-4 pb-3 gap-3">
@@ -226,7 +257,7 @@ const Dashboard = () => {
               </TabsContent>
             </Tabs>
           </div>
-          <div className="w-[300px] flex-shrink-0">
+          <div className="w-[300px] flex-shrink-0 min-h-[200px]">
             <SignalPanel signals={signals} onConfirm={handleConfirmTrade} onDismiss={dismissSignal} riskLimitReached={riskLimitReached} />
           </div>
         </div>

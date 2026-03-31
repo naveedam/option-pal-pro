@@ -17,6 +17,7 @@ export interface OptionData {
   putBid: number;
   putAsk: number;
   isATM: boolean;
+  oiSource?: 'nse' | 'synthetic';
 }
 
 export interface MarketData {
@@ -30,6 +31,8 @@ export interface MarketData {
   sensexATM: number;
   niftyChain: OptionData[];
   sensexChain: OptionData[];
+  niftyMaxPain: number;
+  sensexMaxPain: number;
   timestamp: number;
 }
 
@@ -316,6 +319,7 @@ function generateSignals(data: MarketData, priceHistory: number[]): TradeSignal[
 
 // ─── Hook ────────────────────────────────────────────────────────────
 export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolean = false) {
+  const [autoTradeEnabled, setAutoTradeEnabled] = useState(false);
   const [marketData, setMarketData] = useState<MarketData | null>(null);
   const [signals, setSignals] = useState<TradeSignal[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
@@ -468,5 +472,6 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
     riskSettings, setRiskSettings, riskLimitReached,
     executePaperTrade, validateRiskLimits, addLivePosition,
     exitPosition, dismissSignal, feedHealth, retryFeed,
+    autoTradeEnabled, setAutoTradeEnabled,
   };
 }

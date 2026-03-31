@@ -23,7 +23,7 @@ function ConfidenceBadge({ confidence }: { confidence: number }) {
 
 export function SignalPanel({ signals, onConfirm, onDismiss, riskLimitReached }: SignalPanelProps) {
   return (
-    <div className="panel flex flex-col h-full">
+    <div className="panel flex flex-col h-full min-h-[200px]">
       <div className="panel-header">
         <div className="flex items-center gap-2">
           <Zap className="w-3.5 h-3.5 text-signal" />

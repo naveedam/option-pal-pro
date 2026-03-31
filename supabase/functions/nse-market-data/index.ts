@@ -97,6 +97,28 @@ async function fetchNseOptionChain(symbol: string): Promise<Map<number, NseOiRow
   }
 }
 
+function calculateMaxPain(chain: { strike: number; callOI: number; putOI: number }[]): number {
+  if (chain.length === 0) return 0;
+  let minPain = Infinity;
+  let maxPainStrike = 0;
+  for (const candidate of chain) {
+    let pain = 0;
+    for (const row of chain) {
+      if (row.strike < candidate.strike) {
+        pain += (candidate.strike - row.strike) * row.callOI;
+      }
+      if (row.strike > candidate.strike) {
+        pain += (row.strike - candidate.strike) * row.putOI;
+      }
+    }
+    if (pain < minPain) {
+      minPain = pain;
+      maxPainStrike = candidate.strike;
+    }
+  }
+  return maxPainStrike;
+}
+
 function buildChain(spot: number, stepSize: number, nseOi: Map<number, NseOiRow> | null) {
   if (spot <= 0) return [];
   const atm = Math.round(spot / stepSize) * stepSize;
@@ -179,6 +201,9 @@ Deno.serve(async (req) => {
 
     const oiSource = niftyNseOi && niftyNseOi.size > 0 ? "nse" : "synthetic";
 
+    const niftyMaxPain = calculateMaxPain(niftyChain);
+    const sensexMaxPain = calculateMaxPain(sensexChain);
+
     const responseData = {
       success: true,
       source: "yahoo-finance-v8",
@@ -189,11 +214,13 @@ Deno.serve(async (req) => {
         niftyChange,
         niftyPCR,
         niftyChain,
+        niftyMaxPain,
         sensexSpot,
         sensexATM: sensexSpot > 0 ? Math.round(sensexSpot / 100) * 100 : 0,
         sensexChange,
         sensexPCR,
         sensexChain,
+        sensexMaxPain,
         timestamp: Date.now(),
       },
     };
