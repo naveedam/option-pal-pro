@@ -280,6 +280,7 @@ export class MarketDataProvider {
         niftyPCR: 0, sensexPCR: 0,
         niftyATM: 0, sensexATM: 0,
         niftyChain: [], sensexChain: [],
+        niftyMaxPain: 0, sensexMaxPain: 0,
         timestamp: Date.now(),
       },
       isStale: true,
