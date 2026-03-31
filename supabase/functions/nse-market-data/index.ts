@@ -97,6 +97,28 @@ async function fetchNseOptionChain(symbol: string): Promise<Map<number, NseOiRow
   }
 }
 
+function calculateMaxPain(chain: { strike: number; callOI: number; putOI: number }[]): number {
+  if (chain.length === 0) return 0;
+  let minPain = Infinity;
+  let maxPainStrike = 0;
+  for (const candidate of chain) {
+    let pain = 0;
+    for (const row of chain) {
+      if (row.strike < candidate.strike) {
+        pain += (candidate.strike - row.strike) * row.callOI;
+      }
+      if (row.strike > candidate.strike) {
+        pain += (row.strike - candidate.strike) * row.putOI;
+      }
+    }
+    if (pain < minPain) {
+      minPain = pain;
+      maxPainStrike = candidate.strike;
+    }
+  }
+  return maxPainStrike;
+}
+
 function buildChain(spot: number, stepSize: number, nseOi: Map<number, NseOiRow> | null) {
   if (spot <= 0) return [];
   const atm = Math.round(spot / stepSize) * stepSize;
