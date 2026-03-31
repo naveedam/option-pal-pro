@@ -319,6 +319,7 @@ function generateSignals(data: MarketData, priceHistory: number[]): TradeSignal[
 
 // ─── Hook ────────────────────────────────────────────────────────────
 export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolean = false) {
+  const [autoTradeEnabled, setAutoTradeEnabled] = useState(false);
   const [marketData, setMarketData] = useState<MarketData | null>(null);
   const [signals, setSignals] = useState<TradeSignal[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
