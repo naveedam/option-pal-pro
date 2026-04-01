@@ -465,7 +465,7 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
         return p;
       })
     );
-  }, [riskLimitReached]);
+  }, [riskLimitReached, riskSettings]);
 
   // Timeout fallback: if no data after 8s, show error
   useEffect(() => {
