@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { KotakMarketFeed, type FeedHealth } from '@/services/kotakMarketFeed';
+import { calculateQty } from '@/hooks/usePositionSizing';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface OptionData {
