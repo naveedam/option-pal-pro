@@ -12,6 +12,8 @@ import { SignalPanel } from '@/components/trading/SignalPanel';
 import { PositionsPanel } from '@/components/trading/PositionsPanel';
 import { RiskControls } from '@/components/trading/RiskControls';
 import { AnalyticsPanels } from '@/components/trading/AnalyticsPanels';
+import { BacktestPanel } from '@/components/trading/BacktestPanel';
+import { useBacktest } from '@/hooks/useBacktest';
 import { useMarketData } from '@/hooks/useMarketData';
 import { useBrokerConnection } from '@/hooks/useBrokerConnection';
 import { useTradeStore } from '@/hooks/useTradeStore';
