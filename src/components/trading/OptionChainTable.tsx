@@ -6,6 +6,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 interface OptionChainTableProps {
   chain: OptionData[];
   index: string;
+  highlightedStrike?: number | null;
 }
 
 function HeatCell({ intensity, side }: { intensity: number; side: 'call' | 'put' }) {
@@ -19,7 +20,7 @@ function HeatCell({ intensity, side }: { intensity: number; side: 'call' | 'put'
   );
 }
 
-export function OptionChainTable({ chain, index }: OptionChainTableProps) {
+export function OptionChainTable({ chain, index, highlightedStrike }: OptionChainTableProps) {
   const [hoveredStrike, setHoveredStrike] = useState<number | null>(null);
   const smartMoney = useSmartMoney(chain);
 
@@ -73,7 +74,9 @@ export function OptionChainTable({ chain, index }: OptionChainTableProps) {
                     row.isATM ? 'atm-row' : ''
                   } ${analysis?.isSupport ? 'border-l-2 border-l-profit' : ''}
                     ${analysis?.isResistance ? 'border-r-2 border-r-loss' : ''}
+                    ${highlightedStrike === row.strike ? 'bg-signal/20 ring-1 ring-signal/50' : ''}
                     ${hoveredStrike === row.strike ? 'bg-secondary/50' : 'hover:bg-secondary/30'}`}
+                  id={`strike-${row.strike}`}
                   onMouseEnter={() => setHoveredStrike(row.strike)}
                   onMouseLeave={() => setHoveredStrike(null)}
                 >
