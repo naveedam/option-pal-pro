@@ -28,6 +28,7 @@ const Dashboard = () => {
 
   const broker = useBrokerConnection();
   const tradeStore = useTradeStore();
+  const backtestResult = useBacktest(tradeStore.closedTrades);
 
   const {
     marketData, signals, positions, tradesToday, dailyPnL,
