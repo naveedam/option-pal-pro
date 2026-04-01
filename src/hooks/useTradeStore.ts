@@ -16,6 +16,11 @@ export interface StoredTrade {
   is_paper: boolean;
   created_at: string;
   closed_at: string | null;
+  signal_type: string | null;
+  signal_strategy: string | null;
+  signal_confidence: number | null;
+  stop_loss: number | null;
+  notes: string | null;
 }
 
 export function useTradeStore() {
