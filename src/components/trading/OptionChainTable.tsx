@@ -74,7 +74,9 @@ export function OptionChainTable({ chain, index, highlightedStrike }: OptionChai
                     row.isATM ? 'atm-row' : ''
                   } ${analysis?.isSupport ? 'border-l-2 border-l-profit' : ''}
                     ${analysis?.isResistance ? 'border-r-2 border-r-loss' : ''}
+                    ${highlightedStrike === row.strike ? 'bg-signal/20 ring-1 ring-signal/50' : ''}
                     ${hoveredStrike === row.strike ? 'bg-secondary/50' : 'hover:bg-secondary/30'}`}
+                  id={`strike-${row.strike}`}
                   onMouseEnter={() => setHoveredStrike(row.strike)}
                   onMouseLeave={() => setHoveredStrike(null)}
                 >
