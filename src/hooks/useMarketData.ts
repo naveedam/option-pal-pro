@@ -69,6 +69,9 @@ export interface RiskSettings {
   maxTradesPerDay: number;
   maxDailyLoss: number;
   cooldownMinutes: number;
+  capital: number;
+  riskPerTrade: number; // fraction e.g. 0.02
+  stopLossPct: number;  // fraction e.g. 0.02
 }
 
 // ─── Analytics helpers ───────────────────────────────────────────────
