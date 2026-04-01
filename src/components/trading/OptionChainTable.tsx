@@ -20,7 +20,7 @@ function HeatCell({ intensity, side }: { intensity: number; side: 'call' | 'put'
   );
 }
 
-export function OptionChainTable({ chain, index }: OptionChainTableProps) {
+export function OptionChainTable({ chain, index, highlightedStrike }: OptionChainTableProps) {
   const [hoveredStrike, setHoveredStrike] = useState<number | null>(null);
   const smartMoney = useSmartMoney(chain);
 
