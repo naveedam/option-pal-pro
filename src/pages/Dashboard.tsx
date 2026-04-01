@@ -247,7 +247,12 @@ const Dashboard = () => {
         </div>
 
         <div className="px-4 pb-2 flex-shrink-0">
-          <AnalyticsPanels chain={activeChain} spotPrice={activeSpot} index={selectedIndex} maxPain={selectedIndex === 'NIFTY' ? marketData.niftyMaxPain : marketData.sensexMaxPain} />
+          <div className="grid grid-cols-[1fr_auto] gap-3">
+            <AnalyticsPanels chain={activeChain} spotPrice={activeSpot} index={selectedIndex} maxPain={selectedIndex === 'NIFTY' ? marketData.niftyMaxPain : marketData.sensexMaxPain} />
+            <div className="w-[220px]">
+              <BacktestPanel result={backtestResult} />
+            </div>
+          </div>
         </div>
 
         <div className="flex-1 flex min-h-0 px-4 pb-3 gap-3">
