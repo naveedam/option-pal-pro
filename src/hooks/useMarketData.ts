@@ -332,6 +332,7 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
   const [lastTradeTime, setLastTradeTime] = useState(0);
   const [riskSettings, setRiskSettings] = useState<RiskSettings>({
     maxTradesPerDay: 10, maxDailyLoss: 3000, cooldownMinutes: 5,
+    capital: 100000, riskPerTrade: 0.02, stopLossPct: 0.02,
   });
   const [riskLimitReached, setRiskLimitReached] = useState(false);
   const [feedHealth, setFeedHealth] = useState<FeedHealth>({
