@@ -6,6 +6,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 interface OptionChainTableProps {
   chain: OptionData[];
   index: string;
+  highlightedStrike?: number | null;
 }
 
 function HeatCell({ intensity, side }: { intensity: number; side: 'call' | 'put' }) {
