@@ -304,27 +304,28 @@ const Dashboard = () => {
           {/* Option Chain with toggle */}
           {showOptionChain && (
             <div className="flex-1 flex flex-col min-h-0">
-              <div className="flex items-center gap-2 mb-2">
-                <Tabs value={selectedIndex} onValueChange={(v) => setSelectedIndex(v as 'NIFTY' | 'SENSEX')} className="flex-1">
-                  <div className="flex items-center justify-between">
-                    <TabsList className="bg-secondary border border-border w-fit">
-                      <TabsTrigger value="NIFTY" className="font-mono text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">NIFTY</TabsTrigger>
-                      <TabsTrigger value="SENSEX" className="font-mono text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">SENSEX</TabsTrigger>
-                    </TabsList>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setShowOptionChain(false)}
-                      className="text-xs text-muted-foreground gap-1"
-                    >
-                      <EyeOff className="w-3 h-3" /> Hide Chain
-                    </Button>
-                  </div>
-                </Tabs>
-              </div>
-              <TabsContent value={selectedIndex} className="flex-1 min-h-0 mt-0" forceMount>
-                <OptionChainTable chain={activeChain} index={selectedIndex} highlightedStrike={highlightedStrike} />
-              </TabsContent>
+              <Tabs value={selectedIndex} onValueChange={(v) => setSelectedIndex(v as 'NIFTY' | 'SENSEX')} className="flex flex-col flex-1 min-h-0">
+                <div className="flex items-center justify-between mb-2">
+                  <TabsList className="bg-secondary border border-border w-fit">
+                    <TabsTrigger value="NIFTY" className="font-mono text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">NIFTY</TabsTrigger>
+                    <TabsTrigger value="SENSEX" className="font-mono text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">SENSEX</TabsTrigger>
+                  </TabsList>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowOptionChain(false)}
+                    className="text-xs text-muted-foreground gap-1"
+                  >
+                    <EyeOff className="w-3 h-3" /> Hide Chain
+                  </Button>
+                </div>
+                <TabsContent value="NIFTY" className="flex-1 min-h-0 mt-0">
+                  <OptionChainTable chain={marketData.niftyChain} index="NIFTY" highlightedStrike={highlightedStrike} />
+                </TabsContent>
+                <TabsContent value="SENSEX" className="flex-1 min-h-0 mt-0">
+                  <OptionChainTable chain={marketData.sensexChain} index="SENSEX" highlightedStrike={highlightedStrike} />
+                </TabsContent>
+              </Tabs>
             </div>
           )}
 
