@@ -317,8 +317,88 @@ function generatePriceActionSignals(data: MarketData, priceHistory: number[]): T
   return signals;
 }
 
+function generateMultiTimeframeSignals(data: MarketData, priceHistory: number[]): TradeSignal[] {
+  if (priceHistory.length < 10) return [];
+  const signals: TradeSignal[] = [];
+  const now = Date.now();
+  const spot = data.niftySpot;
+  const niftyATM = data.niftyChain.find(o => o.isATM);
+  if (!niftyATM || spot <= 0) return signals;
+
+  // Short-term trend (last 3)
+  const short = priceHistory.slice(-3);
+  const shortRising = short.length >= 2 && short[short.length - 1] > short[0];
+  const shortFalling = short.length >= 2 && short[short.length - 1] < short[0];
+
+  // Medium-term trend (last 10)
+  const med = priceHistory.slice(-10);
+  const medAvg = med.reduce((s, p) => s + p, 0) / med.length;
+  const medTrendUp = spot > medAvg;
+  const medTrendDown = spot < medAvg;
+
+  // Long-term trend (all 20)
+  const longAvg = priceHistory.reduce((s, p) => s + p, 0) / priceHistory.length;
+  const longTrendUp = spot > longAvg;
+  const longTrendDown = spot < longAvg;
+
+  const high20 = Math.max(...priceHistory);
+  const low20 = Math.min(...priceHistory);
+  const range = high20 - low20;
+
+  // Multi-timeframe STRONG BUY: breakout + short rising + medium up + long up
+  if (spot > high20 && range > 10 && shortRising && medTrendUp && longTrendUp) {
+    signals.push({
+      id: `sig-mtf-${now}-1`, index: 'NIFTY', strike: data.niftyATM, optionType: 'CE',
+      strategy: 'MTF Strong Buy',
+      reason: `Breakout above ${high20.toFixed(0)} confirmed by all timeframes (short↑ med↑ long↑)`,
+      currentPrice: niftyATM.callLTP, suggestedQty: 50, timestamp: now, strength: 'HIGH',
+      confidence: weightedConfidence([
+        { value: Math.min(100, ((spot - high20) / 20) * 100), weight: 2 },
+        { value: 90, weight: 3 }, // multi-TF alignment bonus
+        { value: Math.min(100, (range / 100) * 100), weight: 1 },
+      ]),
+    });
+  }
+
+  // Multi-timeframe STRONG SELL: breakdown + short falling + medium down + long down
+  if (spot < low20 && range > 10 && shortFalling && medTrendDown && longTrendDown) {
+    signals.push({
+      id: `sig-mtf-${now}-2`, index: 'NIFTY', strike: data.niftyATM, optionType: 'PE',
+      strategy: 'MTF Strong Sell',
+      reason: `Breakdown below ${low20.toFixed(0)} confirmed by all timeframes (short↓ med↓ long↓)`,
+      currentPrice: niftyATM.putLTP, suggestedQty: 50, timestamp: now, strength: 'HIGH',
+      confidence: weightedConfidence([
+        { value: Math.min(100, ((low20 - spot) / 20) * 100), weight: 2 },
+        { value: 90, weight: 3 },
+        { value: Math.min(100, (range / 100) * 100), weight: 1 },
+      ]),
+    });
+  }
+
+  // Trend continuation: price above medium MA, PCR confirms
+  if (medTrendUp && data.niftyPCR > 1.0 && shortRising) {
+    signals.push({
+      id: `sig-mtf-${now}-3`, index: 'NIFTY', strike: data.niftyATM, optionType: 'CE',
+      strategy: 'Trend Continuation',
+      reason: `Uptrend: spot above ${medAvg.toFixed(0)} avg, PCR ${data.niftyPCR.toFixed(2)} bullish, short-term rising`,
+      currentPrice: niftyATM.callLTP, suggestedQty: 25, timestamp: now, strength: 'MEDIUM',
+      confidence: weightedConfidence([
+        { value: Math.min(100, ((spot - medAvg) / 30) * 100), weight: 2 },
+        { value: Math.min(100, (data.niftyPCR - 0.8) * 200), weight: 2 },
+        { value: longTrendUp ? 80 : 40, weight: 1 },
+      ]),
+    });
+  }
+
+  return signals;
+}
+
 function generateSignals(data: MarketData, priceHistory: number[]): TradeSignal[] {
-  return [...generateOiSignals(data), ...generatePriceActionSignals(data, priceHistory)];
+  return [
+    ...generateOiSignals(data),
+    ...generatePriceActionSignals(data, priceHistory),
+    ...generateMultiTimeframeSignals(data, priceHistory),
+  ];
 }
 
 // ─── Hook ────────────────────────────────────────────────────────────
