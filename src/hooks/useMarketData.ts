@@ -428,8 +428,21 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
     if (!riskLimitReached) {
       const newSignals = generateSignals(data, priceHistoryRef.current);
 
-      if (newSignals.length > 0) {
-        setSignals(prev => [...newSignals, ...prev].slice(0, 20));
+      // Apply dynamic position sizing to each signal
+      const sizedSignals = newSignals.map(sig => {
+        const lotSize = sig.index === 'NIFTY' ? 25 : 10;
+        const stopLossPoints = sig.currentPrice * riskSettings.stopLossPct;
+        const qty = calculateQty({
+          capital: riskSettings.capital,
+          riskPerTrade: riskSettings.riskPerTrade,
+          stopLossPoints,
+          lotSize,
+        });
+        return { ...sig, suggestedQty: qty };
+      });
+
+      if (sizedSignals.length > 0) {
+        setSignals(prev => [...sizedSignals, ...prev].slice(0, 20));
       }
     }
     // Update rolling price history AFTER signal generation (max 20 entries)
