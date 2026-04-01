@@ -57,7 +57,11 @@ export function useTradeStore() {
     return () => { supabase.removeChannel(channel); };
   }, [fetchTrades]);
 
-  const saveTrade = useCallback(async (position: Position, isPaper: boolean): Promise<string | null> => {
+  const saveTrade = useCallback(async (
+    position: Position,
+    isPaper: boolean,
+    signalMeta?: { type?: string; strategy?: string; confidence?: number; stopLoss?: number }
+  ): Promise<string | null> => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return null;
 
@@ -72,6 +76,10 @@ export function useTradeStore() {
       pnl: 0,
       status: 'open',
       is_paper: isPaper,
+      signal_type: signalMeta?.type || null,
+      signal_strategy: signalMeta?.strategy || null,
+      signal_confidence: signalMeta?.confidence || null,
+      stop_loss: signalMeta?.stopLoss || null,
     }).select('id').single();
 
     if (error) {
