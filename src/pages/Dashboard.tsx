@@ -12,6 +12,8 @@ import { SignalPanel } from '@/components/trading/SignalPanel';
 import { PositionsPanel } from '@/components/trading/PositionsPanel';
 import { RiskControls } from '@/components/trading/RiskControls';
 import { AnalyticsPanels } from '@/components/trading/AnalyticsPanels';
+import { BacktestPanel } from '@/components/trading/BacktestPanel';
+import { useBacktest } from '@/hooks/useBacktest';
 import { useMarketData } from '@/hooks/useMarketData';
 import { useBrokerConnection } from '@/hooks/useBrokerConnection';
 import { useTradeStore } from '@/hooks/useTradeStore';
@@ -26,6 +28,7 @@ const Dashboard = () => {
 
   const broker = useBrokerConnection();
   const tradeStore = useTradeStore();
+  const backtestResult = useBacktest(tradeStore.closedTrades);
 
   const {
     marketData, signals, positions, tradesToday, dailyPnL,
@@ -52,7 +55,12 @@ const Dashboard = () => {
         toast.success(`📝 Paper order placed: ${signal.index} ${signal.strike} ${signal.optionType}`, {
           description: `Qty: ${signal.suggestedQty} @ ₹${signal.currentPrice.toFixed(2)} | Confidence: ${signal.confidence}%`,
         });
-        await tradeStore.saveTrade(result.position, true);
+        await tradeStore.saveTrade(result.position, true, {
+          type: signal.optionType === 'CE' ? 'BUY' : 'SELL',
+          strategy: signal.strategy,
+          confidence: signal.confidence,
+          stopLoss: signal.currentPrice * (1 - riskSettings.stopLossPct),
+        });
       } else {
         toast.error('Order blocked', { description: result.reason });
       }
@@ -239,7 +247,12 @@ const Dashboard = () => {
         </div>
 
         <div className="px-4 pb-2 flex-shrink-0">
-          <AnalyticsPanels chain={activeChain} spotPrice={activeSpot} index={selectedIndex} maxPain={selectedIndex === 'NIFTY' ? marketData.niftyMaxPain : marketData.sensexMaxPain} />
+          <div className="grid grid-cols-[1fr_auto] gap-3">
+            <AnalyticsPanels chain={activeChain} spotPrice={activeSpot} index={selectedIndex} maxPain={selectedIndex === 'NIFTY' ? marketData.niftyMaxPain : marketData.sensexMaxPain} />
+            <div className="w-[220px]">
+              <BacktestPanel result={backtestResult} />
+            </div>
+          </div>
         </div>
 
         <div className="flex-1 flex min-h-0 px-4 pb-3 gap-3">

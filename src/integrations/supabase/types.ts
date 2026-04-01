@@ -127,11 +127,16 @@ export type Database = {
           exit_price: number | null
           id: string
           is_paper: boolean
+          notes: string | null
           option_type: string
           order_id: string
           pnl: number | null
           quantity: number
+          signal_confidence: number | null
+          signal_strategy: string | null
+          signal_type: string | null
           status: string
+          stop_loss: number | null
           strike: number
           symbol: string
           user_id: string
@@ -143,11 +148,16 @@ export type Database = {
           exit_price?: number | null
           id?: string
           is_paper?: boolean
+          notes?: string | null
           option_type: string
           order_id: string
           pnl?: number | null
           quantity: number
+          signal_confidence?: number | null
+          signal_strategy?: string | null
+          signal_type?: string | null
           status?: string
+          stop_loss?: number | null
           strike: number
           symbol: string
           user_id: string
@@ -159,11 +169,16 @@ export type Database = {
           exit_price?: number | null
           id?: string
           is_paper?: boolean
+          notes?: string | null
           option_type?: string
           order_id?: string
           pnl?: number | null
           quantity?: number
+          signal_confidence?: number | null
+          signal_strategy?: string | null
+          signal_type?: string | null
           status?: string
+          stop_loss?: number | null
           strike?: number
           symbol?: string
           user_id?: string

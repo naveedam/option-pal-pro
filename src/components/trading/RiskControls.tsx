@@ -27,7 +27,7 @@ export function RiskControls({ settings, onUpdate, tradesToday, dailyPnL, riskLi
         )}
       </div>
       <div className="p-3 space-y-3">
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-6 gap-3">
           <div>
             <Label className="text-[10px] text-muted-foreground">Max Trades/Day</Label>
             <Input
@@ -58,6 +58,35 @@ export function RiskControls({ settings, onUpdate, tradesToday, dailyPnL, riskLi
               type="number"
               value={settings.cooldownMinutes}
               onChange={e => onUpdate({ ...settings, cooldownMinutes: Number(e.target.value) })}
+              className="h-7 text-xs font-mono bg-secondary border-border"
+            />
+          </div>
+          <div>
+            <Label className="text-[10px] text-muted-foreground">Capital (₹)</Label>
+            <Input
+              type="number"
+              value={settings.capital}
+              onChange={e => onUpdate({ ...settings, capital: Number(e.target.value) })}
+              className="h-7 text-xs font-mono bg-secondary border-border"
+            />
+          </div>
+          <div>
+            <Label className="text-[10px] text-muted-foreground">Risk/Trade (%)</Label>
+            <Input
+              type="number"
+              step="0.5"
+              value={(settings.riskPerTrade * 100)}
+              onChange={e => onUpdate({ ...settings, riskPerTrade: Number(e.target.value) / 100 })}
+              className="h-7 text-xs font-mono bg-secondary border-border"
+            />
+          </div>
+          <div>
+            <Label className="text-[10px] text-muted-foreground">Stop Loss (%)</Label>
+            <Input
+              type="number"
+              step="0.5"
+              value={(settings.stopLossPct * 100)}
+              onChange={e => onUpdate({ ...settings, stopLossPct: Number(e.target.value) / 100 })}
               className="h-7 text-xs font-mono bg-secondary border-border"
             />
           </div>
