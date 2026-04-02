@@ -121,7 +121,7 @@ const Dashboard = () => {
         const { data, error } = await supabase.functions.invoke('kotak-place-order', {
           body: {
             symbol: signal.index, strike: signal.strike, optionType: signal.optionType,
-            quantity: signal.suggestedQty, orderType: 'MARKET', product: 'MIS', transactionType: 'BUY',
+            quantity: signal.suggestedQty, orderType: 'MARKET', product: 'MIS', transactionType,
           },
         });
         if (error) {
