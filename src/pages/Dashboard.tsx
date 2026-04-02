@@ -344,6 +344,7 @@ const Dashboard = () => {
               riskLimitReached={riskLimitReached}
               onExecuteTrade={handleExecuteTrade}
               onViewInChain={handleViewInChain}
+              dataSourceInfo={dataSourceInfo}
             />
           </div>
         </div>
