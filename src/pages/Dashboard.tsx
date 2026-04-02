@@ -84,6 +84,10 @@ const Dashboard = () => {
       timestamp: Date.now(),
       strength: 'MEDIUM' as const,
       confidence: 100,
+      dataSource: 'yahoo' as const,
+      isStale: false,
+      dataTimestamp: Date.now(),
+      oiSource: 'synthetic' as const,
     };
     const modifiedSignal = { ...baseSignal, suggestedQty: params.quantity };
     await handleConfirmTrade(modifiedSignal, params.transactionType);
