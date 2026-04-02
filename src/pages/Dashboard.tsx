@@ -41,7 +41,7 @@ const Dashboard = () => {
     riskSettings, setRiskSettings, riskLimitReached,
     executePaperTrade, validateRiskLimits, addLivePosition,
     exitPosition, dismissSignal, feedHealth, retryFeed,
-    autoTradeEnabled, setAutoTradeEnabled,
+    autoTradeEnabled, setAutoTradeEnabled, dataSourceInfo,
   } = useMarketData(isPaperTrading, true);
 
   const openBrokerDialog = useCallback(() => setBrokerDialogOpen(true), []);
