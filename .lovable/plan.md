@@ -1,75 +1,48 @@
 
 
-## Upgrade: Max Pain, OI Badges, Auto-Trade, Signal Panel Fixes
+## Fix: Kotak Order Placement Failing
 
-### Part 1: Max Pain Calculation + Display
+### Root Cause
 
-**Edge function (`supabase/functions/nse-market-data/index.ts`)**
-- Add `calculateMaxPain(chain)` — iterate all strikes, for each candidate compute total pain (call holders lose when settling above strike, put holders lose when settling below), return strike with minimum total pain
-- Add `niftyMaxPain` and `sensexMaxPain` to response payload
+Two issues found from edge function logs:
 
-**Frontend (`src/hooks/useMarketData.ts`)**
-- Add `niftyMaxPain` and `sensexMaxPain` to `MarketData` interface
+1. **Wrong API URL**: The order function calls `https://gw-napi.kotaksecurities.com/Orders/2.0/quick/order/rule/ms/place` (hardcoded). But the broker session stores a dynamic `base_url` = `https://e41.kotaksecurities.com` assigned during authentication. Kotak Neo requires using this dynamic base URL for all API calls post-login. The hardcoded URL returns an empty/error response.
 
-**UI (`src/components/trading/AnalyticsPanels.tsx`)**
-- Add a 4th analytics card: **MAX PAIN** showing strike value, distance from spot in points and %, and directional bias (spot > maxPain = bearish pull, spot < maxPain = bullish pull)
-- Change grid from `grid-cols-3` to `grid-cols-4`
+2. **Unsafe response parsing**: `kotakResponse.json()` crashes with "Unexpected end of JSON input" because the wrong endpoint returns an empty or HTML response. The code should use `.text()` first, then try JSON parse.
 
-### Part 2: OI Source Badges in Option Chain
+### Fix (single file: `supabase/functions/kotak-place-order/index.ts`)
 
-**Frontend (`src/hooks/useMarketData.ts`)**
-- Add `oiSource?: 'nse' | 'synthetic'` to `OptionData` interface
-- Pass through from API response
+**Change 1**: Read `base_url` from the `broker_sessions` row (already available since we `select("*")`). Use it to construct the order endpoint URL:
+```
+const orderUrl = `${session.base_url}/Orders/2.0/quick/order/rule/ms/place`;
+```
 
-**UI (`src/components/trading/OptionChainTable.tsx`)**
-- Add a small dot indicator next to OI values: green dot for real NSE data, yellow dot for synthetic
-- Add legend entry: `🟢=Real OI  🟡=Est`
+**Change 2**: Add the required `neo-fin-key: "neotradeapi"` header (required by all Kotak Neo API calls per the auth flow docs).
 
-### Part 3: Auto-Trade Execution
+**Change 3**: Replace `kotakResponse.json()` with safe parsing:
+```typescript
+const responseText = await kotakResponse.text();
+let kotakData;
+try {
+  kotakData = JSON.parse(responseText);
+} catch {
+  console.error("Non-JSON response from Kotak:", responseText.substring(0, 500));
+  // return error with the raw text for debugging
+}
+```
 
-**Frontend (`src/hooks/useMarketData.ts`)**
-- Add `autoTradeEnabled` state (default `false`)
-- In `handleMarketData`, after generating signals: if `autoTradeEnabled && !isPaperTrading`, filter signals with `confidence > 75` and `strength === 'HIGH'`, call an `onAutoTrade` callback
-- Safety checks: respect existing risk limits (daily loss, max trades, cooldown)
+**Change 4**: Add `base_url` fallback — if `session.base_url` is missing, fall back to the hardcoded URL as a last resort.
 
-**Dashboard (`src/pages/Dashboard.tsx`)**
-- Add auto-trade toggle switch in header (only visible when broker connected + live mode)
-- Wire auto-trade callback to invoke `kotak-place-order` edge function (same flow as manual confirm)
-- Show toast for each auto-executed trade
-- Add `autoTradeEnabled` to `useMarketData` hook export
+### Also fix: `transactionType` is always "BUY"
 
-### Part 4: Fix Signal Panel Visibility
-
-**Dashboard (`src/pages/Dashboard.tsx`)**
-- The signal panel container at line 229 has `w-[300px]` but sits inside a `flex min-h-0` parent — if no signals exist and the panel has no min-height, it can collapse
-- Add `min-h-[200px]` to the signal panel wrapper
-- Ensure the signal panel's parent flex container uses `overflow-visible` or proper `min-h-0` cascading
-
-**SignalPanel (`src/components/trading/SignalPanel.tsx`)**
-- Already has buy/sell buttons from previous work — verify they render correctly
-- Add `min-h-[200px]` to the panel root to prevent collapse when empty
-- Ensure `overflow-y: auto` and `max-h` work together properly inside the flex layout
-
-### Part 5: Signal Type Labels + Strength Colors
-
-Already partially implemented. Verify and ensure:
-- Strategy badges ("Price Action" / "OI Analysis") render in each signal card
-- Confidence badge colors: ≥75 green, ≥50 yellow, <50 gray (already in `ConfidenceBadge`)
-- Strength badge: HIGH = green bg, MEDIUM = yellow bg (already implemented)
+In `Dashboard.tsx` line 130, the `transactionType` is hardcoded to `'BUY'` regardless of what the user clicks in the trade ticket modal. The modal passes `transactionType` as a parameter but it's ignored. Fix: pass `params.transactionType` through.
 
 ### Files to modify
-
-1. `supabase/functions/nse-market-data/index.ts` — add `calculateMaxPain()`, include in response
-2. `src/hooks/useMarketData.ts` — add `maxPain` + `oiSource` to types, add `autoTradeEnabled` state
-3. `src/components/trading/AnalyticsPanels.tsx` — add Max Pain card, 4-col grid
-4. `src/components/trading/OptionChainTable.tsx` — OI source dot indicators
-5. `src/components/trading/SignalPanel.tsx` — min-height fix
-6. `src/pages/Dashboard.tsx` — auto-trade toggle, wire auto-execution, signal panel min-height
+1. `supabase/functions/kotak-place-order/index.ts` — use dynamic `base_url`, add `neo-fin-key` header, safe JSON parsing
+2. `src/pages/Dashboard.tsx` — pass `transactionType` from trade ticket params
 
 ### Technical details
-
-- Max Pain formula: for each candidate strike S, pain = Σ max(0, S - row.strike) × row.callOI + Σ max(0, row.strike - S) × row.putOI; pick S with minimum pain
-- Auto-trade only fires when: `autoTradeEnabled && !isPaperTrading && broker.trading === 'connected' && signal.confidence > 75 && riskLimits.ok`
-- Auto-traded signals get auto-dismissed from the panel after execution
-- OI source field already exists in edge function response — just needs to be threaded through to the frontend types
+- The `broker_sessions` row already contains `base_url` field (confirmed: `https://e41.kotaksecurities.com`)
+- The `neo-fin-key: "neotradeapi"` header is required per Kotak Neo API docs (used in auth flow already)
+- Kotak's `tt` field expects `"B"` or `"S"`, so map `BUY` → `"B"` and `SELL` → `"S"`
 
