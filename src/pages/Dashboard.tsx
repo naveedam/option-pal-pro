@@ -352,6 +352,34 @@ const Dashboard = () => {
           </div>
         </div>
 
+        {/* Daily P&L Summary Bar */}
+        <div className="px-4 py-1.5 flex-shrink-0 border-t border-border bg-secondary/30">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-6">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-muted-foreground font-mono uppercase">Day P&L</span>
+                <span className={`text-sm font-mono font-bold ${dailyPnL >= 0 ? 'text-profit' : 'text-loss'}`}>
+                  {dailyPnL >= 0 ? '+' : ''}₹{dailyPnL.toFixed(2)}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-muted-foreground font-mono uppercase">Trades</span>
+                <span className="text-sm font-mono text-foreground">{tradesToday}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-muted-foreground font-mono uppercase">Open</span>
+                <span className="text-sm font-mono text-foreground">{positions.length}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-muted-foreground font-mono uppercase">Mode</span>
+                <span className={`text-xs font-mono font-bold ${isPaperTrading ? 'text-warning' : 'text-loss'}`}>
+                  {isPaperTrading ? 'PAPER' : 'LIVE'}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Positions */}
         <div className="px-4 pb-3 h-[200px] flex-shrink-0">
           <PositionsPanel positions={positions} dailyPnL={dailyPnL} tradesToday={tradesToday} onExitPosition={handleExitPosition} tradeHistory={tradeStore.closedTrades} />
