@@ -102,6 +102,10 @@ Deno.serve(async (req) => {
       }), { status: 403, headers: jsonHeaders });
     }
 
+    // Determine base URL from session or fallback
+    const baseUrl = session.base_url || "https://gw-napi.kotaksecurities.com";
+    console.log("Using base_url:", baseUrl);
+
     // Check session expiry
     if (session.expires_at && new Date(session.expires_at) < new Date()) {
       console.error("Broker session expired at:", session.expires_at);
