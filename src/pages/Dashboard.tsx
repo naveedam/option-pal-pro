@@ -357,12 +357,6 @@ const Dashboard = () => {
           <PositionsPanel positions={positions} dailyPnL={dailyPnL} tradesToday={tradesToday} onExitPosition={handleExitPosition} tradeHistory={tradeStore.closedTrades} />
         </div>
 
-        {/* Quick Trade FAB */}
-        <QuickTradeFAB
-          signalCount={signals.length}
-          onClick={() => setSignalDrawerOpen(true)}
-        />
-
         {/* Trade Ticket Modal */}
         <TradeTicketModal
           open={tradeTicketOpen}
