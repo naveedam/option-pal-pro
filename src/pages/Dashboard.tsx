@@ -253,9 +253,6 @@ const Dashboard = () => {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* P&L Tracker */}
-            <PnLTracker dailyPnL={dailyPnL} tradesToday={tradesToday} openPositions={positions.length} />
-
             {!isPaperTrading && isBrokerFullyConnected(broker) && (
               <div className="flex items-center gap-2">
                 <span className="text-xs font-mono text-signal">⚡ AUTO</span>
