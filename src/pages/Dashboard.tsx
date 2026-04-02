@@ -14,8 +14,6 @@ import { RiskControls } from '@/components/trading/RiskControls';
 import { AnalyticsPanels } from '@/components/trading/AnalyticsPanels';
 import { BacktestPanel } from '@/components/trading/BacktestPanel';
 import { TradeTicketModal } from '@/components/trading/TradeTicketModal';
-import { PnLTracker } from '@/components/trading/PnLTracker';
-import { QuickTradeFAB } from '@/components/trading/QuickTradeFAB';
 import { useBacktest } from '@/hooks/useBacktest';
 import { useMarketData } from '@/hooks/useMarketData';
 import { useBrokerConnection } from '@/hooks/useBrokerConnection';
