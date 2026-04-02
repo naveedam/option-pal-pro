@@ -102,6 +102,10 @@ Deno.serve(async (req) => {
       }), { status: 403, headers: jsonHeaders });
     }
 
+    // Determine base URL from session or fallback
+    const baseUrl = session.base_url || "https://gw-napi.kotaksecurities.com";
+    console.log("Using base_url:", baseUrl);
+
     // Check session expiry
     if (session.expires_at && new Date(session.expires_at) < new Date()) {
       console.error("Broker session expired at:", session.expires_at);
@@ -126,39 +130,55 @@ Deno.serve(async (req) => {
       tokenPrefix: session.access_token.substring(0, 8) + "...",
     });
 
-    // Call Kotak Neo Order Placement API
-    try {
-      const kotakResponse = await fetch(
-        "https://gw-napi.kotaksecurities.com/Orders/2.0/quick/order/rule/ms/place",
-        {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${session.access_token}`,
-            "Content-Type": "application/json",
-            "sid": session.session_token || "",
-          },
-          body: JSON.stringify({
-            am: "NO",
-            dq: "0",
-            es: optionType === "CE" || optionType === "PE" ? "nse_fo" : "nse_cm",
-            mp: "0",
-            pc: product || "MIS",
-            pf: "N",
-            pr: "0",
-            pt: orderType || "MKT",
-            qt: String(quantity),
-            rt: "DAY",
-            tp: "0",
-            ts: symbol,
-            tt: transactionType || "B",
-            st: String(strike),
-            ot: optionType,
-          }),
-        }
-      );
+    // Map transactionType: BUY→B, SELL→S
+    const ttValue = transactionType === "SELL" || transactionType === "S" ? "S" : "B";
 
-      const kotakData = await kotakResponse.json();
-      console.log("Kotak response status:", kotakResponse.status, "data:", JSON.stringify(kotakData));
+    // Call Kotak Neo Order Placement API
+    const orderUrl = `${baseUrl}/Orders/2.0/quick/order/rule/ms/place`;
+    console.log("Order URL:", orderUrl, "tt:", ttValue);
+
+    try {
+      const kotakResponse = await fetch(orderUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+          "sid": session.session_token || "",
+          "neo-fin-key": "neotradeapi",
+        },
+        body: JSON.stringify({
+          am: "NO",
+          dq: "0",
+          es: optionType === "CE" || optionType === "PE" ? "nse_fo" : "nse_cm",
+          mp: "0",
+          pc: product || "MIS",
+          pf: "N",
+          pr: "0",
+          pt: orderType || "MKT",
+          qt: String(quantity),
+          rt: "DAY",
+          tp: "0",
+          ts: symbol,
+          tt: ttValue,
+          st: String(strike),
+          ot: optionType,
+        }),
+      });
+
+      // Safe response parsing
+      const responseText = await kotakResponse.text();
+      console.log("Kotak response status:", kotakResponse.status, "body:", responseText.substring(0, 500));
+
+      let kotakData: any;
+      try {
+        kotakData = JSON.parse(responseText);
+      } catch {
+        console.error("Non-JSON response from Kotak:", responseText.substring(0, 500));
+        return new Response(JSON.stringify({
+          success: false,
+          error: `Broker returned non-JSON response (HTTP ${kotakResponse.status}). Please reconnect.`,
+        }), { status: 502, headers: jsonHeaders });
+      }
 
       if (kotakResponse.ok && kotakData?.nOrdNo) {
         // Persist the trade

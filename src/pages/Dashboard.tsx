@@ -72,30 +72,24 @@ const Dashboard = () => {
   }) => {
     // Find matching signal to reuse existing flow
     const signal = signals.find(s => s.strike === params.strike && s.optionType === params.optionType);
-    if (!signal) {
-      // Create a minimal signal-like object for direct execution
-      const fakeSignal = {
-        id: `manual-${Date.now()}`,
-        index: params.symbol as 'NIFTY' | 'SENSEX',
-        strike: params.strike,
-        optionType: params.optionType,
-        strategy: 'Manual',
-        reason: 'Manual trade',
-        currentPrice: 0,
-        suggestedQty: params.quantity,
-        timestamp: Date.now(),
-        strength: 'MEDIUM' as const,
-        confidence: 100,
-      };
-      await handleConfirmTrade(fakeSignal);
-      return;
-    }
-    // Override qty from modal
-    const modifiedSignal = { ...signal, suggestedQty: params.quantity };
-    await handleConfirmTrade(modifiedSignal);
+    const baseSignal = signal || {
+      id: `manual-${Date.now()}`,
+      index: params.symbol as 'NIFTY' | 'SENSEX',
+      strike: params.strike,
+      optionType: params.optionType,
+      strategy: 'Manual',
+      reason: 'Manual trade',
+      currentPrice: 0,
+      suggestedQty: params.quantity,
+      timestamp: Date.now(),
+      strength: 'MEDIUM' as const,
+      confidence: 100,
+    };
+    const modifiedSignal = { ...baseSignal, suggestedQty: params.quantity };
+    await handleConfirmTrade(modifiedSignal, params.transactionType);
   };
 
-  const handleConfirmTrade = async (signal: typeof signals[0]) => {
+  const handleConfirmTrade = async (signal: typeof signals[0], transactionType: 'BUY' | 'SELL' = 'BUY') => {
     const riskCheck = validateRiskLimits();
     if (!riskCheck.ok) {
       toast.error('Order blocked', { description: riskCheck.reason });
@@ -127,7 +121,7 @@ const Dashboard = () => {
         const { data, error } = await supabase.functions.invoke('kotak-place-order', {
           body: {
             symbol: signal.index, strike: signal.strike, optionType: signal.optionType,
-            quantity: signal.suggestedQty, orderType: 'MARKET', product: 'MIS', transactionType: 'BUY',
+            quantity: signal.suggestedQty, orderType: 'MARKET', product: 'MIS', transactionType,
           },
         });
         if (error) {
