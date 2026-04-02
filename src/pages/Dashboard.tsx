@@ -41,7 +41,7 @@ const Dashboard = () => {
     riskSettings, setRiskSettings, riskLimitReached,
     executePaperTrade, validateRiskLimits, addLivePosition,
     exitPosition, dismissSignal, feedHealth, retryFeed,
-    autoTradeEnabled, setAutoTradeEnabled,
+    autoTradeEnabled, setAutoTradeEnabled, dataSourceInfo,
   } = useMarketData(isPaperTrading, true);
 
   const openBrokerDialog = useCallback(() => setBrokerDialogOpen(true), []);
@@ -84,6 +84,10 @@ const Dashboard = () => {
       timestamp: Date.now(),
       strength: 'MEDIUM' as const,
       confidence: 100,
+      dataSource: 'yahoo' as const,
+      isStale: false,
+      dataTimestamp: Date.now(),
+      oiSource: 'synthetic' as const,
     };
     const modifiedSignal = { ...baseSignal, suggestedQty: params.quantity };
     await handleConfirmTrade(modifiedSignal, params.transactionType);
@@ -340,6 +344,7 @@ const Dashboard = () => {
               riskLimitReached={riskLimitReached}
               onExecuteTrade={handleExecuteTrade}
               onViewInChain={handleViewInChain}
+              dataSourceInfo={dataSourceInfo}
             />
           </div>
         </div>

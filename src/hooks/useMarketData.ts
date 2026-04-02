@@ -37,6 +37,8 @@ export interface MarketData {
   timestamp: number;
 }
 
+export type DataSource = 'nse' | 'synthetic' | 'yahoo';
+
 export interface TradeSignal {
   id: string;
   index: 'NIFTY' | 'SENSEX';
@@ -49,6 +51,11 @@ export interface TradeSignal {
   timestamp: number;
   strength: 'HIGH' | 'MEDIUM';
   confidence: number;
+  // New fields for data integrity
+  dataSource: DataSource;
+  isStale: boolean;
+  dataTimestamp: number;
+  oiSource: 'nse' | 'synthetic';
 }
 
 export interface Position {
@@ -70,8 +77,8 @@ export interface RiskSettings {
   maxDailyLoss: number;
   cooldownMinutes: number;
   capital: number;
-  riskPerTrade: number; // fraction e.g. 0.02
-  stopLossPct: number;  // fraction e.g. 0.02
+  riskPerTrade: number;
+  stopLossPct: number;
 }
 
 // ─── Analytics helpers ───────────────────────────────────────────────
@@ -88,45 +95,68 @@ function getDealerGamma(chain: OptionData[]): number {
   return chain.reduce((s, r) => s + (r.putOI - r.callOI), 0);
 }
 
+// ─── Live Price Binding ──────────────────────────────────────────────
+/** Look up real-time LTP from the option chain for a given strike */
+function getLivePrice(chain: OptionData[], strike: number, optionType: 'CE' | 'PE'): number {
+  const row = chain.find(r => r.strike === strike);
+  if (!row) return 0;
+  return optionType === 'CE' ? row.callLTP : row.putLTP;
+}
+
+/** Determine OI source for a specific strike */
+function getStrikeOiSource(chain: OptionData[], strike: number): 'nse' | 'synthetic' {
+  const row = chain.find(r => r.strike === strike);
+  return row?.oiSource ?? 'synthetic';
+}
+
 // ─── Signal Generation ──────────────────────────────────────────────
+const STALE_THRESHOLD_MS = 5000;
+
 function weightedConfidence(factors: { value: number; weight: number }[]): number {
   const totalWeight = factors.reduce((s, f) => s + f.weight, 0);
   const weighted = factors.reduce((s, f) => s + f.value * f.weight, 0);
   return Math.max(0, Math.min(100, Math.round(weighted / totalWeight)));
 }
 
-function generateOiSignals(data: MarketData): TradeSignal[] {
+function generateOiSignals(data: MarketData, dataTimestamp: number, oiSource: DataSource): TradeSignal[] {
   const signals: TradeSignal[] = [];
   const now = Date.now();
-  const niftyATM = data.niftyChain.find(o => o.isATM);
+  const isStale = (now - dataTimestamp) > STALE_THRESHOLD_MS;
+  const chain = data.niftyChain;
+  const niftyATM = chain.find(o => o.isATM);
   if (!niftyATM) return signals;
 
   let maxCallOI = 0, maxCallOIStrike = 0;
   let maxPutOI = 0, maxPutOIStrike = 0;
-  for (const row of data.niftyChain) {
+  for (const row of chain) {
     if (row.callOI > maxCallOI) { maxCallOI = row.callOI; maxCallOIStrike = row.strike; }
     if (row.putOI > maxPutOI) { maxPutOI = row.putOI; maxPutOIStrike = row.strike; }
   }
 
-  const gammaWall = findGammaWall(data.niftyChain);
-  const dealerGamma = getDealerGamma(data.niftyChain);
+  const gammaWall = findGammaWall(chain);
+  const dealerGamma = getDealerGamma(chain);
   const gammaProximity = gammaWall.strike > 0
     ? Math.max(0, 100 - (Math.abs(data.niftySpot - gammaWall.strike) / 50) * 20)
     : 0;
   const dealerFactor = Math.min(100, Math.abs(dealerGamma) / 50000 * 100);
+
+  const baseFields = { dataSource: oiSource, isStale, dataTimestamp };
 
   if (data.niftyPCR < 0.8 && niftyATM.putOIChange > 0) {
     signals.push({
       id: `sig-${now}-1`, index: 'NIFTY', strike: niftyATM.strike, optionType: 'PE',
       strategy: 'PCR Reversal',
       reason: `PCR ${data.niftyPCR.toFixed(2)} < 0.8, Put OI building +${niftyATM.putOIChange.toLocaleString()}`,
-      currentPrice: niftyATM.putLTP, suggestedQty: 50, timestamp: now, strength: 'HIGH',
+      currentPrice: getLivePrice(chain, niftyATM.strike, 'PE'),
+      suggestedQty: 50, timestamp: now, strength: 'HIGH',
+      oiSource: getStrikeOiSource(chain, niftyATM.strike),
       confidence: weightedConfidence([
         { value: Math.min(100, ((0.8 - data.niftyPCR) / 0.3) * 100), weight: 3 },
         { value: Math.min(100, (niftyATM.putOIChange / 3000) * 100), weight: 2 },
         { value: gammaProximity, weight: 1 },
         { value: dealerFactor, weight: 1 },
       ]),
+      ...baseFields,
     });
   }
 
@@ -135,13 +165,16 @@ function generateOiSignals(data: MarketData): TradeSignal[] {
       id: `sig-${now}-2`, index: 'NIFTY', strike: niftyATM.strike, optionType: 'CE',
       strategy: 'PCR Reversal',
       reason: `PCR ${data.niftyPCR.toFixed(2)} > 1.2, Call OI building +${niftyATM.callOIChange.toLocaleString()}`,
-      currentPrice: niftyATM.callLTP, suggestedQty: 50, timestamp: now, strength: 'HIGH',
+      currentPrice: getLivePrice(chain, niftyATM.strike, 'CE'),
+      suggestedQty: 50, timestamp: now, strength: 'HIGH',
+      oiSource: getStrikeOiSource(chain, niftyATM.strike),
       confidence: weightedConfidence([
         { value: Math.min(100, ((data.niftyPCR - 1.2) / 0.3) * 100), weight: 3 },
         { value: Math.min(100, (niftyATM.callOIChange / 3000) * 100), weight: 2 },
         { value: gammaProximity, weight: 1 },
         { value: dealerFactor, weight: 1 },
       ]),
+      ...baseFields,
     });
   }
 
@@ -152,14 +185,17 @@ function generateOiSignals(data: MarketData): TradeSignal[] {
       id: `sig-${now}-3`, index: 'NIFTY', strike: maxCallOIStrike, optionType: 'CE',
       strategy: 'Call Wall Breakdown',
       reason: `Spot ${data.niftySpot.toFixed(0)} broke call resistance at ${maxCallOIStrike}`,
-      currentPrice: niftyATM.callLTP, suggestedQty: 25, timestamp: now,
+      currentPrice: getLivePrice(chain, maxCallOIStrike, 'CE'),
+      suggestedQty: 25, timestamp: now,
       strength: breakFactor > 60 ? 'HIGH' : 'MEDIUM',
+      oiSource: getStrikeOiSource(chain, maxCallOIStrike),
       confidence: weightedConfidence([
         { value: breakFactor, weight: 3 },
         { value: volFactor, weight: 2 },
         { value: gammaProximity, weight: 1 },
         { value: dealerGamma < 0 ? 80 : 30, weight: 1 },
       ]),
+      ...baseFields,
     });
   }
 
@@ -170,14 +206,17 @@ function generateOiSignals(data: MarketData): TradeSignal[] {
       id: `sig-${now}-4`, index: 'NIFTY', strike: maxPutOIStrike, optionType: 'PE',
       strategy: 'Put Support Breakdown',
       reason: `Spot ${data.niftySpot.toFixed(0)} broke put support at ${maxPutOIStrike}`,
-      currentPrice: niftyATM.putLTP, suggestedQty: 25, timestamp: now,
+      currentPrice: getLivePrice(chain, maxPutOIStrike, 'PE'),
+      suggestedQty: 25, timestamp: now,
       strength: breakFactor > 60 ? 'HIGH' : 'MEDIUM',
+      oiSource: getStrikeOiSource(chain, maxPutOIStrike),
       confidence: weightedConfidence([
         { value: breakFactor, weight: 3 },
         { value: volFactor, weight: 2 },
         { value: gammaProximity, weight: 1 },
         { value: dealerGamma < 0 ? 80 : 30, weight: 1 },
       ]),
+      ...baseFields,
     });
   }
 
@@ -188,101 +227,113 @@ function generateOiSignals(data: MarketData): TradeSignal[] {
       id: `sig-${now}-5`, index: 'NIFTY', strike: niftyATM.strike,
       optionType: isBullish ? 'CE' : 'PE', strategy: 'ATM Volatility Spike',
       reason: `ATM volume surge: CE ${niftyATM.callVolume.toLocaleString()} + PE ${niftyATM.putVolume.toLocaleString()}`,
-      currentPrice: isBullish ? niftyATM.callLTP : niftyATM.putLTP,
+      currentPrice: getLivePrice(chain, niftyATM.strike, isBullish ? 'CE' : 'PE'),
       suggestedQty: 25, timestamp: now,
       strength: volFactor > 70 ? 'HIGH' : 'MEDIUM',
+      oiSource: getStrikeOiSource(chain, niftyATM.strike),
       confidence: weightedConfidence([
         { value: volFactor, weight: 3 },
         { value: Math.min(100, ((Math.abs(niftyATM.callOIChange) + Math.abs(niftyATM.putOIChange)) / 6000) * 100), weight: 2 },
         { value: gammaProximity, weight: 1 },
         { value: dealerFactor, weight: 1 },
       ]),
+      ...baseFields,
     });
   }
 
   return signals;
 }
 
-function generatePriceActionSignals(data: MarketData, priceHistory: number[]): TradeSignal[] {
+function generatePriceActionSignals(data: MarketData, priceHistory: number[], dataTimestamp: number, oiSource: DataSource): TradeSignal[] {
   if (priceHistory.length < 5) return [];
   const signals: TradeSignal[] = [];
   const now = Date.now();
+  const isStale = (now - dataTimestamp) > STALE_THRESHOLD_MS;
   const spot = data.niftySpot;
   const atm = data.niftyATM;
-  const niftyATM = data.niftyChain.find(o => o.isATM);
+  const chain = data.niftyChain;
+  const niftyATM = chain.find(o => o.isATM);
   if (!niftyATM || spot <= 0) return signals;
 
   const high20 = Math.max(...priceHistory);
   const low20 = Math.min(...priceHistory);
   const range = high20 - low20;
-  const proximityThreshold = spot * 0.003; // 0.3%
+  const proximityThreshold = spot * 0.003;
 
-  // Trend direction from last 3 prices
   const recent = priceHistory.slice(-3);
   const rising = recent.length >= 2 && recent[recent.length - 1] > recent[0];
   const falling = recent.length >= 2 && recent[recent.length - 1] < recent[0];
 
-  // Breakout Buy: spot exceeds 20-period high
+  const baseFields = { dataSource: oiSource, isStale, dataTimestamp };
+
   if (spot > high20 && range > 10) {
     signals.push({
       id: `sig-pa-${now}-1`, index: 'NIFTY', strike: atm, optionType: 'CE',
       strategy: 'Breakout Buy',
       reason: `Spot ${spot.toFixed(0)} broke 20-period high ${high20.toFixed(0)}`,
-      currentPrice: niftyATM.callLTP, suggestedQty: 50, timestamp: now, strength: 'HIGH',
+      currentPrice: getLivePrice(chain, atm, 'CE'),
+      suggestedQty: 50, timestamp: now, strength: 'HIGH',
+      oiSource: getStrikeOiSource(chain, atm),
       confidence: weightedConfidence([
         { value: Math.min(100, ((spot - high20) / 20) * 100), weight: 3 },
         { value: Math.min(100, (range / 100) * 100), weight: 2 },
         { value: rising ? 80 : 40, weight: 1 },
       ]),
+      ...baseFields,
     });
   }
 
-  // Breakdown Sell: spot falls below 20-period low
   if (spot < low20 && range > 10) {
     signals.push({
       id: `sig-pa-${now}-2`, index: 'NIFTY', strike: atm, optionType: 'PE',
       strategy: 'Breakdown Sell',
       reason: `Spot ${spot.toFixed(0)} broke 20-period low ${low20.toFixed(0)}`,
-      currentPrice: niftyATM.putLTP, suggestedQty: 50, timestamp: now, strength: 'HIGH',
+      currentPrice: getLivePrice(chain, atm, 'PE'),
+      suggestedQty: 50, timestamp: now, strength: 'HIGH',
+      oiSource: getStrikeOiSource(chain, atm),
       confidence: weightedConfidence([
         { value: Math.min(100, ((low20 - spot) / 20) * 100), weight: 3 },
         { value: Math.min(100, (range / 100) * 100), weight: 2 },
         { value: falling ? 80 : 40, weight: 1 },
       ]),
+      ...baseFields,
     });
   }
 
-  // Support Bounce: near low20 and rising
   if (Math.abs(spot - low20) < proximityThreshold && rising) {
     signals.push({
       id: `sig-pa-${now}-3`, index: 'NIFTY', strike: atm, optionType: 'CE',
       strategy: 'Support Bounce',
       reason: `Spot ${spot.toFixed(0)} bouncing off support ${low20.toFixed(0)}`,
-      currentPrice: niftyATM.callLTP, suggestedQty: 25, timestamp: now, strength: 'MEDIUM',
+      currentPrice: getLivePrice(chain, atm, 'CE'),
+      suggestedQty: 25, timestamp: now, strength: 'MEDIUM',
+      oiSource: getStrikeOiSource(chain, atm),
       confidence: weightedConfidence([
         { value: Math.min(100, (1 - Math.abs(spot - low20) / proximityThreshold) * 100), weight: 3 },
         { value: rising ? 80 : 30, weight: 2 },
         { value: Math.min(100, (range / 80) * 100), weight: 1 },
       ]),
+      ...baseFields,
     });
   }
 
-  // Resistance Rejection: near high20 and falling
   if (Math.abs(spot - high20) < proximityThreshold && falling) {
     signals.push({
       id: `sig-pa-${now}-4`, index: 'NIFTY', strike: atm, optionType: 'PE',
       strategy: 'Resistance Rejection',
       reason: `Spot ${spot.toFixed(0)} rejected at resistance ${high20.toFixed(0)}`,
-      currentPrice: niftyATM.putLTP, suggestedQty: 25, timestamp: now, strength: 'MEDIUM',
+      currentPrice: getLivePrice(chain, atm, 'PE'),
+      suggestedQty: 25, timestamp: now, strength: 'MEDIUM',
+      oiSource: getStrikeOiSource(chain, atm),
       confidence: weightedConfidence([
         { value: Math.min(100, (1 - Math.abs(spot - high20) / proximityThreshold) * 100), weight: 3 },
         { value: falling ? 80 : 30, weight: 2 },
         { value: Math.min(100, (range / 80) * 100), weight: 1 },
       ]),
+      ...baseFields,
     });
   }
 
-  // Momentum: last 3 prices show consistent directional move > 0.1%
   if (priceHistory.length >= 3) {
     const last3 = priceHistory.slice(-3);
     const allRising = last3[2] > last3[1] && last3[1] > last3[0];
@@ -293,11 +344,14 @@ function generatePriceActionSignals(data: MarketData, priceHistory: number[]): T
         id: `sig-pa-${now}-5`, index: 'NIFTY', strike: atm, optionType: 'CE',
         strategy: 'Momentum Up',
         reason: `3 consecutive rising ticks, +${pctMove.toFixed(2)}% move`,
-        currentPrice: niftyATM.callLTP, suggestedQty: 25, timestamp: now, strength: 'MEDIUM',
+        currentPrice: getLivePrice(chain, atm, 'CE'),
+        suggestedQty: 25, timestamp: now, strength: 'MEDIUM',
+        oiSource: getStrikeOiSource(chain, atm),
         confidence: weightedConfidence([
           { value: Math.min(100, pctMove * 200), weight: 3 },
           { value: 70, weight: 1 },
         ]),
+        ...baseFields,
       });
     }
     if (allFalling && pctMove > 0.1) {
@@ -305,11 +359,14 @@ function generatePriceActionSignals(data: MarketData, priceHistory: number[]): T
         id: `sig-pa-${now}-6`, index: 'NIFTY', strike: atm, optionType: 'PE',
         strategy: 'Momentum Down',
         reason: `3 consecutive falling ticks, -${pctMove.toFixed(2)}% move`,
-        currentPrice: niftyATM.putLTP, suggestedQty: 25, timestamp: now, strength: 'MEDIUM',
+        currentPrice: getLivePrice(chain, atm, 'PE'),
+        suggestedQty: 25, timestamp: now, strength: 'MEDIUM',
+        oiSource: getStrikeOiSource(chain, atm),
         confidence: weightedConfidence([
           { value: Math.min(100, pctMove * 200), weight: 3 },
           { value: 70, weight: 1 },
         ]),
+        ...baseFields,
       });
     }
   }
@@ -317,26 +374,25 @@ function generatePriceActionSignals(data: MarketData, priceHistory: number[]): T
   return signals;
 }
 
-function generateMultiTimeframeSignals(data: MarketData, priceHistory: number[]): TradeSignal[] {
+function generateMultiTimeframeSignals(data: MarketData, priceHistory: number[], dataTimestamp: number, oiSource: DataSource): TradeSignal[] {
   if (priceHistory.length < 10) return [];
   const signals: TradeSignal[] = [];
   const now = Date.now();
+  const isStale = (now - dataTimestamp) > STALE_THRESHOLD_MS;
   const spot = data.niftySpot;
-  const niftyATM = data.niftyChain.find(o => o.isATM);
+  const chain = data.niftyChain;
+  const niftyATM = chain.find(o => o.isATM);
   if (!niftyATM || spot <= 0) return signals;
 
-  // Short-term trend (last 3)
   const short = priceHistory.slice(-3);
   const shortRising = short.length >= 2 && short[short.length - 1] > short[0];
   const shortFalling = short.length >= 2 && short[short.length - 1] < short[0];
 
-  // Medium-term trend (last 10)
   const med = priceHistory.slice(-10);
   const medAvg = med.reduce((s, p) => s + p, 0) / med.length;
   const medTrendUp = spot > medAvg;
   const medTrendDown = spot < medAvg;
 
-  // Long-term trend (all 20)
   const longAvg = priceHistory.reduce((s, p) => s + p, 0) / priceHistory.length;
   const longTrendUp = spot > longAvg;
   const longTrendDown = spot < longAvg;
@@ -345,60 +401,84 @@ function generateMultiTimeframeSignals(data: MarketData, priceHistory: number[])
   const low20 = Math.min(...priceHistory);
   const range = high20 - low20;
 
-  // Multi-timeframe STRONG BUY: breakout + short rising + medium up + long up
+  const baseFields = { dataSource: oiSource, isStale, dataTimestamp };
+
   if (spot > high20 && range > 10 && shortRising && medTrendUp && longTrendUp) {
     signals.push({
       id: `sig-mtf-${now}-1`, index: 'NIFTY', strike: data.niftyATM, optionType: 'CE',
       strategy: 'MTF Strong Buy',
       reason: `Breakout above ${high20.toFixed(0)} confirmed by all timeframes (short↑ med↑ long↑)`,
-      currentPrice: niftyATM.callLTP, suggestedQty: 50, timestamp: now, strength: 'HIGH',
+      currentPrice: getLivePrice(chain, data.niftyATM, 'CE'),
+      suggestedQty: 50, timestamp: now, strength: 'HIGH',
+      oiSource: getStrikeOiSource(chain, data.niftyATM),
       confidence: weightedConfidence([
         { value: Math.min(100, ((spot - high20) / 20) * 100), weight: 2 },
-        { value: 90, weight: 3 }, // multi-TF alignment bonus
+        { value: 90, weight: 3 },
         { value: Math.min(100, (range / 100) * 100), weight: 1 },
       ]),
+      ...baseFields,
     });
   }
 
-  // Multi-timeframe STRONG SELL: breakdown + short falling + medium down + long down
   if (spot < low20 && range > 10 && shortFalling && medTrendDown && longTrendDown) {
     signals.push({
       id: `sig-mtf-${now}-2`, index: 'NIFTY', strike: data.niftyATM, optionType: 'PE',
       strategy: 'MTF Strong Sell',
       reason: `Breakdown below ${low20.toFixed(0)} confirmed by all timeframes (short↓ med↓ long↓)`,
-      currentPrice: niftyATM.putLTP, suggestedQty: 50, timestamp: now, strength: 'HIGH',
+      currentPrice: getLivePrice(chain, data.niftyATM, 'PE'),
+      suggestedQty: 50, timestamp: now, strength: 'HIGH',
+      oiSource: getStrikeOiSource(chain, data.niftyATM),
       confidence: weightedConfidence([
         { value: Math.min(100, ((low20 - spot) / 20) * 100), weight: 2 },
         { value: 90, weight: 3 },
         { value: Math.min(100, (range / 100) * 100), weight: 1 },
       ]),
+      ...baseFields,
     });
   }
 
-  // Trend continuation: price above medium MA, PCR confirms
   if (medTrendUp && data.niftyPCR > 1.0 && shortRising) {
     signals.push({
       id: `sig-mtf-${now}-3`, index: 'NIFTY', strike: data.niftyATM, optionType: 'CE',
       strategy: 'Trend Continuation',
       reason: `Uptrend: spot above ${medAvg.toFixed(0)} avg, PCR ${data.niftyPCR.toFixed(2)} bullish, short-term rising`,
-      currentPrice: niftyATM.callLTP, suggestedQty: 25, timestamp: now, strength: 'MEDIUM',
+      currentPrice: getLivePrice(chain, data.niftyATM, 'CE'),
+      suggestedQty: 25, timestamp: now, strength: 'MEDIUM',
+      oiSource: getStrikeOiSource(chain, data.niftyATM),
       confidence: weightedConfidence([
         { value: Math.min(100, ((spot - medAvg) / 30) * 100), weight: 2 },
         { value: Math.min(100, (data.niftyPCR - 0.8) * 200), weight: 2 },
         { value: longTrendUp ? 80 : 40, weight: 1 },
       ]),
+      ...baseFields,
     });
   }
 
   return signals;
 }
 
-function generateSignals(data: MarketData, priceHistory: number[]): TradeSignal[] {
+function generateSignals(data: MarketData, priceHistory: number[], dataTimestamp: number, oiSource: DataSource): TradeSignal[] {
   return [
-    ...generateOiSignals(data),
-    ...generatePriceActionSignals(data, priceHistory),
-    ...generateMultiTimeframeSignals(data, priceHistory),
+    ...generateOiSignals(data, dataTimestamp, oiSource),
+    ...generatePriceActionSignals(data, priceHistory, dataTimestamp, oiSource),
+    ...generateMultiTimeframeSignals(data, priceHistory, dataTimestamp, oiSource),
   ];
+}
+
+// ─── Refresh stale flags on existing signals ─────────────────────────
+function refreshStaleness(signals: TradeSignal[], latestData: MarketData): TradeSignal[] {
+  const now = Date.now();
+  const chain = latestData.niftyChain;
+  return signals.map(sig => {
+    const livePrice = getLivePrice(chain, sig.strike, sig.optionType);
+    const isStale = (now - sig.dataTimestamp) > STALE_THRESHOLD_MS;
+    const priceMismatch = livePrice > 0 && Math.abs(livePrice - sig.currentPrice) / sig.currentPrice > 0.02;
+    return {
+      ...sig,
+      currentPrice: livePrice > 0 ? livePrice : sig.currentPrice,
+      isStale: isStale || priceMismatch,
+    };
+  });
 }
 
 // ─── Hook ────────────────────────────────────────────────────────────
@@ -418,17 +498,28 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
   const [feedHealth, setFeedHealth] = useState<FeedHealth>({
     status: 'disconnected', latencyMs: 0, lastTickTime: null, errorMessage: null, consecutiveErrors: 0,
   });
+  const [dataSourceInfo, setDataSourceInfo] = useState<{ source: DataSource; oiSource: 'nse' | 'synthetic'; lastUpdated: number }>({
+    source: 'yahoo', oiSource: 'synthetic', lastUpdated: 0,
+  });
 
   const feedRef = useRef<KotakMarketFeed | null>(null);
   const priceHistoryRef = useRef<number[]>([]);
 
   const handleMarketData = useCallback((data: MarketData) => {
-    setMarketData(data);
-    // Generate signals BEFORE updating history so breakout/breakdown can trigger
-    if (!riskLimitReached) {
-      const newSignals = generateSignals(data, priceHistoryRef.current);
+    const dataTimestamp = data.timestamp || Date.now();
+    const hasRealOi = data.niftyChain.some(r => r.oiSource === 'nse');
+    const oiSource: DataSource = hasRealOi ? 'nse' : 'synthetic';
 
-      // Apply dynamic position sizing to each signal
+    setMarketData(data);
+    setDataSourceInfo({ source: 'yahoo', oiSource: hasRealOi ? 'nse' : 'synthetic', lastUpdated: dataTimestamp });
+
+    // Refresh stale flags on existing signals with new live prices
+    setSignals(prev => refreshStaleness(prev, data));
+
+    // Generate new signals
+    if (!riskLimitReached) {
+      const newSignals = generateSignals(data, priceHistoryRef.current, dataTimestamp, oiSource);
+
       const sizedSignals = newSignals.map(sig => {
         const lotSize = sig.index === 'NIFTY' ? 25 : 10;
         const stopLossPoints = sig.currentPrice * riskSettings.stopLossPct;
@@ -445,12 +536,14 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
         setSignals(prev => [...sizedSignals, ...prev].slice(0, 20));
       }
     }
-    // Update rolling price history AFTER signal generation (max 20 entries)
+
+    // Update rolling price history AFTER signal generation
     if (data.niftySpot > 0) {
       const history = priceHistoryRef.current;
       history.push(data.niftySpot);
       if (history.length > 20) history.shift();
     }
+
     setPositions(prev =>
       prev.map(p => {
         const chain = p.symbol === 'NIFTY' ? data.niftyChain : data.sensexChain;
@@ -467,7 +560,7 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
     );
   }, [riskLimitReached, riskSettings]);
 
-  // Timeout fallback: if no data after 8s, show error
+  // Timeout fallback
   useEffect(() => {
     if (marketData || !marketDataEnabled) return;
     const timeout = setTimeout(() => {
@@ -509,6 +602,7 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
   }, [positions, tradesToday, riskSettings]);
 
   const executePaperTrade = useCallback((signal: TradeSignal): { success: true; position: Position } | { success: false; reason: string } => {
+    if (signal.isStale) return { success: false, reason: 'Signal is stale — price data outdated' };
     const now = Date.now();
     const cooldownMs = riskSettings.cooldownMinutes * 60 * 1000;
     if (now - lastTradeTime < cooldownMs) return { success: false, reason: `Cooldown: wait ${riskSettings.cooldownMinutes}min` };
@@ -570,6 +664,6 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
     riskSettings, setRiskSettings, riskLimitReached,
     executePaperTrade, validateRiskLimits, addLivePosition,
     exitPosition, dismissSignal, feedHealth, retryFeed,
-    autoTradeEnabled, setAutoTradeEnabled,
+    autoTradeEnabled, setAutoTradeEnabled, dataSourceInfo,
   };
 }
