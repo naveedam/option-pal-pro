@@ -89,7 +89,7 @@ const Dashboard = () => {
     await handleConfirmTrade(modifiedSignal, params.transactionType);
   };
 
-  const handleConfirmTrade = async (signal: typeof signals[0]) => {
+  const handleConfirmTrade = async (signal: typeof signals[0], transactionType: 'BUY' | 'SELL' = 'BUY') => {
     const riskCheck = validateRiskLimits();
     if (!riskCheck.ok) {
       toast.error('Order blocked', { description: riskCheck.reason });
