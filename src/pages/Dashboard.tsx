@@ -278,6 +278,13 @@ const Dashboard = () => {
           </div>
         </header>
 
+        {/* Data source warning banner */}
+        {!isPaperTrading && dataSourceInfo.source !== 'kotak' && (
+          <div className="mx-4 mt-1 bg-warning/10 border border-warning/30 rounded-md px-3 py-1.5 text-xs text-warning font-mono flex items-center gap-2">
+            ⚠ Execution disabled — live Kotak data not available. Source: {dataSourceInfo.source.toUpperCase()}. Connect broker for live trading.
+          </div>
+        )}
+
         {/* Risk + Analytics */}
         <div className="px-4 py-2 flex-shrink-0">
           <RiskControls settings={riskSettings} onUpdate={setRiskSettings} tradesToday={tradesToday} dailyPnL={dailyPnL} riskLimitReached={riskLimitReached} />
