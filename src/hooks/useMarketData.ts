@@ -38,7 +38,7 @@ export interface MarketData {
   timestamp: number;
 }
 
-export type DataSource = 'nse' | 'synthetic' | 'yahoo';
+export type DataSource = 'nse' | 'synthetic' | 'yahoo' | 'kotak';
 
 export interface TradeSignal {
   id: string;
