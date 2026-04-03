@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { KotakMarketFeed, type FeedHealth } from '@/services/kotakMarketFeed';
+import { KotakMarketFeed, type FeedHealth, type FeedDataResult } from '@/services/kotakMarketFeed';
 import { calculateQty } from '@/hooks/usePositionSizing';
 import type { ActiveDataSource } from '@/services/marketDataProvider';
 
