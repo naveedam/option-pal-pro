@@ -506,13 +506,14 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
   const feedRef = useRef<KotakMarketFeed | null>(null);
   const priceHistoryRef = useRef<number[]>([]);
 
-  const handleMarketData = useCallback((data: MarketData) => {
+  const handleMarketData = useCallback((result: FeedDataResult) => {
+    const data = result.data;
+    const activeSource = result.source;
     const dataTimestamp = data.timestamp || Date.now();
-    const hasRealOi = data.niftyChain.some(r => r.oiSource === 'nse');
-    const oiSource: DataSource = hasRealOi ? 'nse' : 'synthetic';
+    const oiSource: DataSource = result.oiSource === 'kotak' ? 'kotak' : (result.oiSource === 'nse' ? 'nse' : 'synthetic');
 
     setMarketData(data);
-    setDataSourceInfo({ source: 'yahoo', oiSource: hasRealOi ? 'nse' : 'synthetic', lastUpdated: dataTimestamp });
+    setDataSourceInfo({ source: activeSource, oiSource: result.oiSource, lastUpdated: dataTimestamp });
 
     // Refresh stale flags on existing signals with new live prices
     setSignals(prev => refreshStaleness(prev, data));
