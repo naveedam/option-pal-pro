@@ -35,15 +35,17 @@ function DirectionBadge({ optionType }: { optionType: 'CE' | 'PE' }) {
   );
 }
 
-function DataSourceBadge({ source, oiSource }: { source: DataSource; oiSource: 'nse' | 'synthetic' }) {
+function DataSourceBadge({ source, oiSource }: { source: DataSource; oiSource: 'nse' | 'synthetic' | 'kotak' }) {
   return (
     <div className="flex items-center gap-1">
       <span className={`text-[9px] px-1 py-0.5 rounded font-mono ${
+        source === 'kotak' ? 'bg-profit/20 text-profit' :
         source === 'nse' ? 'bg-profit/20 text-profit' : 'bg-accent text-accent-foreground'
       }`}>
         {source.toUpperCase()}
       </span>
       <span className={`text-[9px] px-1 py-0.5 rounded font-mono ${
+        oiSource === 'kotak' ? 'bg-profit/20 text-profit' :
         oiSource === 'nse' ? 'bg-profit/20 text-profit' : 'bg-warning/20 text-warning'
       }`}>
         OI:{oiSource.toUpperCase()}
