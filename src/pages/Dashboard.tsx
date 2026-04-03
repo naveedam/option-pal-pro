@@ -84,7 +84,7 @@ const Dashboard = () => {
       timestamp: Date.now(),
       strength: 'MEDIUM' as const,
       confidence: 100,
-      dataSource: 'yahoo' as const,
+      dataSource: dataSourceInfo.source as 'kotak' | 'yahoo' | 'nse' | 'synthetic' | 'none',
       isStale: false,
       dataTimestamp: Date.now(),
       oiSource: 'synthetic' as const,
