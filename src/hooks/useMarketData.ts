@@ -499,7 +499,7 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
   const [feedHealth, setFeedHealth] = useState<FeedHealth>({
     status: 'disconnected', latencyMs: 0, lastTickTime: null, errorMessage: null, consecutiveErrors: 0,
   });
-  const [dataSourceInfo, setDataSourceInfo] = useState<{ source: DataSource; oiSource: 'nse' | 'synthetic'; lastUpdated: number }>({
+  const [dataSourceInfo, setDataSourceInfo] = useState<{ source: DataSource; oiSource: 'nse' | 'synthetic' | 'kotak'; lastUpdated: number }>({
     source: 'yahoo', oiSource: 'synthetic', lastUpdated: 0,
   });
 
