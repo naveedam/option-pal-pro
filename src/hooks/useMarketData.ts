@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { KotakMarketFeed, type FeedHealth } from '@/services/kotakMarketFeed';
+import { KotakMarketFeed, type FeedHealth, type FeedDataResult } from '@/services/kotakMarketFeed';
 import { calculateQty } from '@/hooks/usePositionSizing';
+import type { ActiveDataSource } from '@/services/marketDataProvider';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface OptionData {
@@ -37,7 +38,7 @@ export interface MarketData {
   timestamp: number;
 }
 
-export type DataSource = 'nse' | 'synthetic' | 'yahoo';
+export type DataSource = 'nse' | 'synthetic' | 'yahoo' | 'kotak' | 'none';
 
 export interface TradeSignal {
   id: string;
@@ -55,7 +56,7 @@ export interface TradeSignal {
   dataSource: DataSource;
   isStale: boolean;
   dataTimestamp: number;
-  oiSource: 'nse' | 'synthetic';
+  oiSource: 'nse' | 'synthetic' | 'kotak';
 }
 
 export interface Position {
@@ -498,20 +499,21 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
   const [feedHealth, setFeedHealth] = useState<FeedHealth>({
     status: 'disconnected', latencyMs: 0, lastTickTime: null, errorMessage: null, consecutiveErrors: 0,
   });
-  const [dataSourceInfo, setDataSourceInfo] = useState<{ source: DataSource; oiSource: 'nse' | 'synthetic'; lastUpdated: number }>({
+  const [dataSourceInfo, setDataSourceInfo] = useState<{ source: DataSource; oiSource: 'nse' | 'synthetic' | 'kotak'; lastUpdated: number }>({
     source: 'yahoo', oiSource: 'synthetic', lastUpdated: 0,
   });
 
   const feedRef = useRef<KotakMarketFeed | null>(null);
   const priceHistoryRef = useRef<number[]>([]);
 
-  const handleMarketData = useCallback((data: MarketData) => {
+  const handleMarketData = useCallback((result: FeedDataResult) => {
+    const data = result.data;
+    const activeSource = result.source;
     const dataTimestamp = data.timestamp || Date.now();
-    const hasRealOi = data.niftyChain.some(r => r.oiSource === 'nse');
-    const oiSource: DataSource = hasRealOi ? 'nse' : 'synthetic';
+    const oiSource: DataSource = result.oiSource === 'kotak' ? 'kotak' : (result.oiSource === 'nse' ? 'nse' : 'synthetic');
 
     setMarketData(data);
-    setDataSourceInfo({ source: 'yahoo', oiSource: hasRealOi ? 'nse' : 'synthetic', lastUpdated: dataTimestamp });
+    setDataSourceInfo({ source: activeSource, oiSource: result.oiSource, lastUpdated: dataTimestamp });
 
     // Refresh stale flags on existing signals with new live prices
     setSignals(prev => refreshStaleness(prev, data));

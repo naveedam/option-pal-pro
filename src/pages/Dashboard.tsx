@@ -84,10 +84,10 @@ const Dashboard = () => {
       timestamp: Date.now(),
       strength: 'MEDIUM' as const,
       confidence: 100,
-      dataSource: 'yahoo' as const,
+      dataSource: dataSourceInfo.source as 'kotak' | 'yahoo' | 'nse' | 'synthetic' | 'none',
       isStale: false,
       dataTimestamp: Date.now(),
-      oiSource: 'synthetic' as const,
+      oiSource: dataSourceInfo.oiSource as 'nse' | 'synthetic',
     };
     const modifiedSignal = { ...baseSignal, suggestedQty: params.quantity };
     await handleConfirmTrade(modifiedSignal, params.transactionType);
@@ -119,6 +119,10 @@ const Dashboard = () => {
       if (broker.trading !== 'connected') {
         toast.error('Broker not connected', { description: 'Please connect Kotak Neo first.' });
         openBrokerDialog();
+        return;
+      }
+      if (dataSourceInfo.source !== 'kotak') {
+        toast.error('Execution blocked', { description: 'Live trading requires Kotak market data. Current source: ' + dataSourceInfo.source.toUpperCase() });
         return;
       }
       try {
@@ -277,6 +281,13 @@ const Dashboard = () => {
             </Button>
           </div>
         </header>
+
+        {/* Data source warning banner */}
+        {!isPaperTrading && dataSourceInfo.source !== 'kotak' && (
+          <div className="mx-4 mt-1 bg-warning/10 border border-warning/30 rounded-md px-3 py-1.5 text-xs text-warning font-mono flex items-center gap-2">
+            ⚠ Execution disabled — live Kotak data not available. Source: {dataSourceInfo.source.toUpperCase()}. Connect broker for live trading.
+          </div>
+        )}
 
         {/* Risk + Analytics */}
         <div className="px-4 py-2 flex-shrink-0">
