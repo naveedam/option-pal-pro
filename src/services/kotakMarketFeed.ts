@@ -1,4 +1,4 @@
-import { marketDataProvider } from '@/services/marketDataProvider';
+import { marketDataProvider, type ActiveDataSource } from '@/services/marketDataProvider';
 import type { MarketData } from '@/hooks/useMarketData';
 
 export type FeedStatus = 'connected' | 'disconnected' | 'reconnecting' | 'error' | 'stale';
@@ -12,6 +12,12 @@ export interface FeedHealth {
   isStale?: boolean;
 }
 
+export interface FeedDataResult {
+  data: MarketData;
+  source: ActiveDataSource;
+  oiSource: 'nse' | 'synthetic' | 'kotak';
+}
+
 const POLL_INTERVAL_MS = 5000;
 const MAX_CONSECUTIVE_ERRORS = 5;
 
@@ -21,12 +27,12 @@ export class KotakMarketFeed {
     status: 'disconnected', latencyMs: 0, lastTickTime: null,
     errorMessage: null, consecutiveErrors: 0, isStale: false,
   };
-  private onData: (data: MarketData) => void;
+  private onData: (result: FeedDataResult) => void;
   private onHealthChange: (health: FeedHealth) => void;
   private stopped = false;
 
   constructor(
-    onData: (data: MarketData) => void,
+    onData: (result: FeedDataResult) => void,
     onHealthChange: (health: FeedHealth) => void,
   ) {
     this.onData = onData;
@@ -57,14 +63,13 @@ export class KotakMarketFeed {
     const latency = Date.now() - startTime;
 
     if (result.error) {
-      console.log('[KotakMarketFeed] Feed response error', { error: result.error });
+      console.log('[KotakMarketFeed] Feed response error', { error: result.error, source: result.source });
     }
 
-    // We got data (fresh or stale)
     const hasRealData = result.data.niftySpot > 0 || result.data.sensexSpot > 0;
 
     if (hasRealData) {
-      this.onData(result.data);
+      this.onData({ data: result.data, source: result.source, oiSource: result.oiSource });
     }
 
     if (result.isStale && result.error) {
@@ -73,40 +78,26 @@ export class KotakMarketFeed {
       if (newErrors >= MAX_CONSECUTIVE_ERRORS && !hasRealData) {
         this.stopPolling();
         this.updateHealth({
-          status: 'error',
-          latencyMs: latency,
-          errorMessage: result.error,
-          consecutiveErrors: newErrors,
-          isStale: true,
+          status: 'error', latencyMs: latency,
+          errorMessage: result.error, consecutiveErrors: newErrors, isStale: true,
         });
       } else {
-        // Stale but we have cached data — keep going
         this.updateHealth({
           status: hasRealData ? 'stale' : 'reconnecting',
-          latencyMs: latency,
-          lastTickTime: result.lastFreshAt,
-          errorMessage: result.error,
-          consecutiveErrors: newErrors,
-          isStale: true,
+          latencyMs: latency, lastTickTime: result.lastFreshAt,
+          errorMessage: result.error, consecutiveErrors: newErrors, isStale: true,
         });
       }
     } else if (hasRealData) {
       this.updateHealth({
-        status: 'connected',
-        latencyMs: latency,
-        lastTickTime: Date.now(),
-        errorMessage: null,
-        consecutiveErrors: 0,
-        isStale: false,
+        status: 'connected', latencyMs: latency, lastTickTime: Date.now(),
+        errorMessage: null, consecutiveErrors: 0, isStale: false,
       });
     }
   }
 
   private stopPolling() {
-    if (this.intervalId) {
-      clearInterval(this.intervalId);
-      this.intervalId = null;
-    }
+    if (this.intervalId) { clearInterval(this.intervalId); this.intervalId = null; }
   }
 
   private updateHealth(partial: Partial<FeedHealth>) {
