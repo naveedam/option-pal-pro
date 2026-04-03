@@ -121,6 +121,10 @@ const Dashboard = () => {
         openBrokerDialog();
         return;
       }
+      if (dataSourceInfo.source !== 'kotak') {
+        toast.error('Execution blocked', { description: 'Live trading requires Kotak market data. Current source: ' + dataSourceInfo.source.toUpperCase() });
+        return;
+      }
       try {
         const { data, error } = await supabase.functions.invoke('kotak-place-order', {
           body: {
