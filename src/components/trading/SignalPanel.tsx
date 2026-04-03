@@ -11,7 +11,7 @@ interface SignalPanelProps {
   riskLimitReached: boolean;
   onExecuteTrade?: (signal: TradeSignal) => void;
   onViewInChain?: (strike: number) => void;
-  dataSourceInfo?: { source: DataSource; oiSource: 'nse' | 'synthetic'; lastUpdated: number };
+  dataSourceInfo?: { source: DataSource; oiSource: 'nse' | 'synthetic' | 'kotak'; lastUpdated: number };
 }
 
 function ConfidenceBadge({ confidence }: { confidence: number }) {
