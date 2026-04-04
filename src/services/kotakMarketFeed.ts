@@ -15,7 +15,7 @@ export interface FeedHealth {
 export interface FeedDataResult {
   data: MarketData;
   source: ActiveDataSource;
-  oiSource: 'nse' | 'synthetic' | 'kotak';
+  oiSource: 'kotak' | 'none';
 }
 
 const POLL_INTERVAL_MS = 5000;
@@ -57,42 +57,37 @@ export class KotakMarketFeed {
     if (this.stopped) return;
     const startTime = Date.now();
 
-    const result = await marketDataProvider.fetchMarketData(['NIFTY', 'SENSEX'], 10);
+    const result = await marketDataProvider.fetchMarketData();
     if (this.stopped) return;
 
     const latency = Date.now() - startTime;
-
-    if (result.error) {
-      console.log('[KotakMarketFeed] Feed response error', { error: result.error, source: result.source });
-    }
-
-    const hasRealData = result.data.niftySpot > 0 || result.data.sensexSpot > 0;
+    const hasRealData = result.source === 'kotak' && result.data.niftySpot > 0;
 
     if (hasRealData) {
-      this.onData({ data: result.data, source: result.source, oiSource: result.oiSource });
-    }
-
-    if (result.isStale && result.error) {
-      const newErrors = this.health.consecutiveErrors + 1;
-
-      if (newErrors >= MAX_CONSECUTIVE_ERRORS && !hasRealData) {
-        this.stopPolling();
-        this.updateHealth({
-          status: 'error', latencyMs: latency,
-          errorMessage: result.error, consecutiveErrors: newErrors, isStale: true,
-        });
-      } else {
-        this.updateHealth({
-          status: hasRealData ? 'stale' : 'reconnecting',
-          latencyMs: latency, lastTickTime: result.lastFreshAt,
-          errorMessage: result.error, consecutiveErrors: newErrors, isStale: true,
-        });
-      }
-    } else if (hasRealData) {
+      this.onData({ data: result.data, source: 'kotak', oiSource: 'kotak' });
       this.updateHealth({
         status: 'connected', latencyMs: latency, lastTickTime: Date.now(),
         errorMessage: null, consecutiveErrors: 0, isStale: false,
       });
+    } else {
+      const newErrors = this.health.consecutiveErrors + 1;
+      const errorMsg = result.error || 'No live data — connect Kotak broker to trade';
+
+      // Send empty data so UI clears signals
+      this.onData({ data: result.data, source: 'none', oiSource: 'none' });
+
+      if (newErrors >= MAX_CONSECUTIVE_ERRORS) {
+        this.stopPolling();
+        this.updateHealth({
+          status: 'error', latencyMs: latency,
+          errorMessage: errorMsg, consecutiveErrors: newErrors, isStale: true,
+        });
+      } else {
+        this.updateHealth({
+          status: 'reconnecting', latencyMs: latency, lastTickTime: this.health.lastTickTime,
+          errorMessage: errorMsg, consecutiveErrors: newErrors, isStale: true,
+        });
+      }
     }
   }
 
