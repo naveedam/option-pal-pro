@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { Zap, X, TrendingUp, Maximize2, Minimize2, Target, AlertTriangle, Bug } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import type { TradeSignal, DataSource } from '@/hooks/useMarketData';
+import { instrumentStore } from '@/services/instrumentStore';
 
 interface SignalPanelProps {
   signals: TradeSignal[];
