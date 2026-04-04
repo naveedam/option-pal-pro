@@ -190,6 +190,12 @@ export function SignalPanel({ signals, onConfirm, onDismiss, riskLimitReached, o
   const [expanded, setExpanded] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
 
+  // Subscribe to instrument store for reactivity
+  const instrumentState = useSyncExternalStore(
+    instrumentStore.subscribe.bind(instrumentStore),
+    () => instrumentStore.getState()
+  );
+
   const staleCount = signals.filter(s => s.isStale).length;
 
   const panelContent = (
