@@ -19,7 +19,7 @@ export interface OptionData {
   putBid: number;
   putAsk: number;
   isATM: boolean;
-  oiSource?: 'nse' | 'synthetic';
+  oiSource?: 'kotak' | 'none';
 }
 
 export interface MarketData {
