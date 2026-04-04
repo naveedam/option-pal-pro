@@ -283,9 +283,9 @@ const Dashboard = () => {
         </header>
 
         {/* Data source warning banner */}
-        {!isPaperTrading && dataSourceInfo.source !== 'kotak' && (
-          <div className="mx-4 mt-1 bg-warning/10 border border-warning/30 rounded-md px-3 py-1.5 text-xs text-warning font-mono flex items-center gap-2">
-            ⚠ Execution disabled — live Kotak data not available. Source: {dataSourceInfo.source.toUpperCase()}. Connect broker for live trading.
+        {dataSourceInfo.source !== 'kotak' && (
+          <div className="mx-4 mt-1 bg-destructive/10 border border-destructive/30 rounded-md px-3 py-1.5 text-xs text-destructive font-mono flex items-center gap-2">
+            ⚠ No live data — connect Kotak broker to trade. Signals and execution disabled.
           </div>
         )}
 

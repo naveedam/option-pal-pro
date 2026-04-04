@@ -194,8 +194,10 @@ export function SignalPanel({ signals, onConfirm, onDismiss, riskLimitReached, o
       )}
       {/* Data source info bar */}
       {dataSourceInfo && (
-        <div className="bg-muted/30 rounded px-2 py-1 text-[9px] font-mono text-muted-foreground flex items-center justify-between">
-          <span>Feed: {dataSourceInfo.source.toUpperCase()} | OI: {dataSourceInfo.oiSource.toUpperCase()}</span>
+        <div className={`rounded px-2 py-1 text-[9px] font-mono flex items-center justify-between ${
+          dataSourceInfo.source === 'kotak' ? 'bg-profit/10 text-profit' : 'bg-destructive/10 text-destructive'
+        }`}>
+          <span>{dataSourceInfo.source === 'kotak' ? '● Live data: KOTAK' : '○ No live data — cannot trade'}</span>
           <span>{dataSourceInfo.lastUpdated > 0 ? formatAge(Date.now() - dataSourceInfo.lastUpdated) : '—'}</span>
         </div>
       )}
