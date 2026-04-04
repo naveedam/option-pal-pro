@@ -15,7 +15,7 @@ import { AnalyticsPanels } from '@/components/trading/AnalyticsPanels';
 import { BacktestPanel } from '@/components/trading/BacktestPanel';
 import { TradeTicketModal } from '@/components/trading/TradeTicketModal';
 import { useBacktest } from '@/hooks/useBacktest';
-import { useMarketData } from '@/hooks/useMarketData';
+import { useMarketData, type DataSource } from '@/hooks/useMarketData';
 import { useBrokerConnection } from '@/hooks/useBrokerConnection';
 import { useTradeStore } from '@/hooks/useTradeStore';
 import { supabase } from '@/integrations/supabase/client';
