@@ -219,6 +219,15 @@ export function SignalPanel({ signals, onConfirm, onDismiss, riskLimitReached, o
           <span>{dataSourceInfo.lastUpdated > 0 ? formatAge(Date.now() - dataSourceInfo.lastUpdated) : '—'}</span>
         </div>
       )}
+      {/* Instrument store status */}
+      {debugMode && (
+        <div className={`rounded px-2 py-1 text-[9px] font-mono flex items-center justify-between ${
+          instrumentState.loaded ? 'bg-profit/10 text-profit' : 'bg-warning/10 text-warning'
+        }`}>
+          <span>{instrumentState.loaded ? `🔧 ${instrumentState.instruments.length} instruments` : instrumentState.loading ? '⏳ Loading instruments...' : '⚠ Instruments not loaded'}</span>
+          <span>{instrumentState.expiry ? `Exp: ${instrumentState.expiry}` : '—'}</span>
+        </div>
+      )}
       {signals.length === 0 && !riskLimitReached && (
         <div className="text-center text-muted-foreground text-xs py-8">
           <Zap className="w-5 h-5 mx-auto mb-2 opacity-30" />
