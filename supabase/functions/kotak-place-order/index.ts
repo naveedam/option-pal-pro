@@ -160,10 +160,11 @@ Deno.serve(async (req) => {
           qt: String(quantity),
           rt: "DAY",
           tp: "0",
-          ts: symbol,
+          ts: tradingSymbol || symbol,
           tt: ttValue,
           st: String(strike),
           ot: optionType,
+          ...(instrumentToken ? { tk: instrumentToken } : {}),
         }),
       });
 
