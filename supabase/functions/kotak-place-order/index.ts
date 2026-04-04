@@ -127,6 +127,8 @@ Deno.serve(async (req) => {
       strike,
       optionType,
       quantity,
+      instrumentToken: instrumentToken || "none",
+      tradingSymbol: tradingSymbol || "none",
       tokenPrefix: session.access_token.substring(0, 8) + "...",
     });
 
