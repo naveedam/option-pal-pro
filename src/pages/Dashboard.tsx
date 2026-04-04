@@ -20,6 +20,7 @@ import { useBrokerConnection } from '@/hooks/useBrokerConnection';
 import { useTradeStore } from '@/hooks/useTradeStore';
 import { supabase } from '@/integrations/supabase/client';
 import { isBrokerAuthenticated, isBrokerFullyConnected } from '@/services/brokerSession';
+import { instrumentStore, InstrumentError } from '@/services/instrumentStore';
 import { LogOut, Plug, Eye, EyeOff } from 'lucide-react';
 
 const Dashboard = () => {
