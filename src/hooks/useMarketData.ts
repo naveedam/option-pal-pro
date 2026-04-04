@@ -499,8 +499,8 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
   const [feedHealth, setFeedHealth] = useState<FeedHealth>({
     status: 'disconnected', latencyMs: 0, lastTickTime: null, errorMessage: null, consecutiveErrors: 0,
   });
-  const [dataSourceInfo, setDataSourceInfo] = useState<{ source: DataSource; oiSource: 'nse' | 'synthetic' | 'kotak'; lastUpdated: number }>({
-    source: 'yahoo', oiSource: 'synthetic', lastUpdated: 0,
+  const [dataSourceInfo, setDataSourceInfo] = useState<{ source: DataSource; oiSource: 'kotak' | 'none'; lastUpdated: number }>({
+    source: 'none', oiSource: 'none', lastUpdated: 0,
   });
 
   const feedRef = useRef<KotakMarketFeed | null>(null);
