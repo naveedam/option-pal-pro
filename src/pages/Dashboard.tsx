@@ -37,6 +37,13 @@ const Dashboard = () => {
   const tradeStore = useTradeStore();
   const backtestResult = useBacktest(tradeStore.closedTrades);
 
+  // Load instrument store when broker is connected
+  useEffect(() => {
+    if (isBrokerAuthenticated(broker)) {
+      instrumentStore.load().catch(err => console.error('[Dashboard] Instrument load failed:', err));
+    }
+  }, [broker.auth]);
+
   const {
     marketData, signals, positions, tradesToday, dailyPnL,
     riskSettings, setRiskSettings, riskLimitReached,
