@@ -140,13 +140,24 @@ function SignalCard({ signal, onConfirm, onDismiss, riskLimitReached, onExecuteT
       <p className="text-[10px] text-muted-foreground mb-2">{signal.reason}</p>
 
       {/* Debug info */}
-      {debugMode && (
-        <div className="bg-muted/50 rounded px-2 py-1 mb-2 text-[9px] font-mono text-muted-foreground space-y-0.5">
-          <div>Source: {signal.dataSource.toUpperCase()} | OI: {signal.oiSource.toUpperCase()}</div>
-          <div>Updated: {formatAge(Date.now() - signal.dataTimestamp)} | Stale: {signal.isStale ? 'YES' : 'NO'}</div>
-          <div>Strike: {signal.strike} | Timestamp: {new Date(signal.dataTimestamp).toLocaleTimeString()}</div>
-        </div>
-      )}
+      {debugMode && (() => {
+        const storeState = instrumentStore.getState();
+        let resolvedToken = '—';
+        try {
+          const inst = instrumentStore.resolve({ index: signal.index, strike: signal.strike, optionType: signal.optionType });
+          resolvedToken = inst.token;
+        } catch { /* not resolved */ }
+
+        return (
+          <div className="bg-muted/50 rounded px-2 py-1 mb-2 text-[9px] font-mono text-muted-foreground space-y-0.5">
+            <div>Source: {signal.dataSource.toUpperCase()} | OI: {signal.oiSource.toUpperCase()}</div>
+            <div>Updated: {formatAge(Date.now() - signal.dataTimestamp)} | Stale: {signal.isStale ? 'YES' : 'NO'}</div>
+            <div>Strike: {signal.strike} | Expiry: {storeState.expiry || '—'}</div>
+            <div>Token: {resolvedToken} | Store: {storeState.loaded ? `${storeState.instruments.length} instruments` : 'NOT LOADED'}</div>
+            <div>Timestamp: {new Date(signal.dataTimestamp).toLocaleTimeString()}</div>
+          </div>
+        );
+      })()}
 
       {/* Action buttons */}
       <div className="flex items-center gap-2">
