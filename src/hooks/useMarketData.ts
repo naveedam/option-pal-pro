@@ -56,7 +56,7 @@ export interface TradeSignal {
   dataSource: DataSource;
   isStale: boolean;
   dataTimestamp: number;
-  oiSource: 'nse' | 'synthetic' | 'kotak';
+  oiSource: 'kotak' | 'none';
 }
 
 export interface Position {
