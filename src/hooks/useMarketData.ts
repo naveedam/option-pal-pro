@@ -19,7 +19,7 @@ export interface OptionData {
   putBid: number;
   putAsk: number;
   isATM: boolean;
-  oiSource?: 'nse' | 'synthetic';
+  oiSource?: 'kotak' | 'none';
 }
 
 export interface MarketData {
@@ -38,7 +38,7 @@ export interface MarketData {
   timestamp: number;
 }
 
-export type DataSource = 'nse' | 'synthetic' | 'yahoo' | 'kotak' | 'none';
+export type DataSource = 'kotak' | 'none';
 
 export interface TradeSignal {
   id: string;
@@ -56,7 +56,7 @@ export interface TradeSignal {
   dataSource: DataSource;
   isStale: boolean;
   dataTimestamp: number;
-  oiSource: 'nse' | 'synthetic' | 'kotak';
+  oiSource: 'kotak' | 'none';
 }
 
 export interface Position {
@@ -105,9 +105,9 @@ function getLivePrice(chain: OptionData[], strike: number, optionType: 'CE' | 'P
 }
 
 /** Determine OI source for a specific strike */
-function getStrikeOiSource(chain: OptionData[], strike: number): 'nse' | 'synthetic' {
+function getStrikeOiSource(chain: OptionData[], strike: number): 'kotak' | 'none' {
   const row = chain.find(r => r.strike === strike);
-  return row?.oiSource ?? 'synthetic';
+  return row?.oiSource === 'kotak' ? 'kotak' : 'none';
 }
 
 // ─── Signal Generation ──────────────────────────────────────────────
@@ -499,8 +499,8 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
   const [feedHealth, setFeedHealth] = useState<FeedHealth>({
     status: 'disconnected', latencyMs: 0, lastTickTime: null, errorMessage: null, consecutiveErrors: 0,
   });
-  const [dataSourceInfo, setDataSourceInfo] = useState<{ source: DataSource; oiSource: 'nse' | 'synthetic' | 'kotak'; lastUpdated: number }>({
-    source: 'yahoo', oiSource: 'synthetic', lastUpdated: 0,
+  const [dataSourceInfo, setDataSourceInfo] = useState<{ source: DataSource; oiSource: 'kotak' | 'none'; lastUpdated: number }>({
+    source: 'none', oiSource: 'none', lastUpdated: 0,
   });
 
   const feedRef = useRef<KotakMarketFeed | null>(null);
@@ -510,15 +510,36 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
     const data = result.data;
     const activeSource = result.source;
     const dataTimestamp = data.timestamp || Date.now();
-    const oiSource: DataSource = result.oiSource === 'kotak' ? 'kotak' : (result.oiSource === 'nse' ? 'nse' : 'synthetic');
+    const oiSource: DataSource = result.oiSource === 'kotak' ? 'kotak' : 'none';
 
     setMarketData(data);
-    setDataSourceInfo({ source: activeSource, oiSource: result.oiSource, lastUpdated: dataTimestamp });
+    setDataSourceInfo({ source: activeSource, oiSource, lastUpdated: dataTimestamp });
+
+    // If source is not Kotak, clear signals — do NOT generate from non-Kotak data
+    if (activeSource !== 'kotak') {
+      setSignals([]);
+      return;
+    }
+
+    // Validate data freshness (must be within 2 seconds)
+    const dataAge = Date.now() - dataTimestamp;
+    if (dataAge > 2000) {
+      console.log(`[Signals] Data too old (${dataAge}ms), skipping signal generation`);
+      setSignals(prev => refreshStaleness(prev, data));
+      return;
+    }
+
+    // Validate LTP and OI
+    if (data.niftySpot <= 0 || data.niftyChain.length === 0) {
+      console.log('[Signals] No valid LTP or chain data, skipping');
+      setSignals(prev => refreshStaleness(prev, data));
+      return;
+    }
 
     // Refresh stale flags on existing signals with new live prices
     setSignals(prev => refreshStaleness(prev, data));
 
-    // Generate new signals
+    // Generate new signals — only from verified Kotak data
     if (!riskLimitReached) {
       const newSignals = generateSignals(data, priceHistoryRef.current, dataTimestamp, oiSource);
 

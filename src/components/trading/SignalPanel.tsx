@@ -11,7 +11,7 @@ interface SignalPanelProps {
   riskLimitReached: boolean;
   onExecuteTrade?: (signal: TradeSignal) => void;
   onViewInChain?: (strike: number) => void;
-  dataSourceInfo?: { source: DataSource; oiSource: 'nse' | 'synthetic' | 'kotak'; lastUpdated: number };
+  dataSourceInfo?: { source: DataSource; oiSource: 'kotak' | 'none'; lastUpdated: number };
 }
 
 function ConfidenceBadge({ confidence }: { confidence: number }) {
@@ -35,20 +35,18 @@ function DirectionBadge({ optionType }: { optionType: 'CE' | 'PE' }) {
   );
 }
 
-function DataSourceBadge({ source, oiSource }: { source: DataSource; oiSource: 'nse' | 'synthetic' | 'kotak' }) {
+function DataSourceBadge({ source, oiSource }: { source: DataSource; oiSource: 'kotak' | 'none' }) {
   return (
     <div className="flex items-center gap-1">
       <span className={`text-[9px] px-1 py-0.5 rounded font-mono ${
-        source === 'kotak' ? 'bg-profit/20 text-profit' :
-        source === 'nse' ? 'bg-profit/20 text-profit' : 'bg-accent text-accent-foreground'
+        source === 'kotak' ? 'bg-profit/20 text-profit' : 'bg-destructive/20 text-destructive'
       }`}>
-        {source.toUpperCase()}
+        {source === 'kotak' ? 'KOTAK' : 'NO DATA'}
       </span>
       <span className={`text-[9px] px-1 py-0.5 rounded font-mono ${
-        oiSource === 'kotak' ? 'bg-profit/20 text-profit' :
-        oiSource === 'nse' ? 'bg-profit/20 text-profit' : 'bg-warning/20 text-warning'
+        oiSource === 'kotak' ? 'bg-profit/20 text-profit' : 'bg-destructive/20 text-destructive'
       }`}>
-        OI:{oiSource.toUpperCase()}
+        OI:{oiSource === 'kotak' ? 'KOTAK' : 'NONE'}
       </span>
     </div>
   );
@@ -196,8 +194,10 @@ export function SignalPanel({ signals, onConfirm, onDismiss, riskLimitReached, o
       )}
       {/* Data source info bar */}
       {dataSourceInfo && (
-        <div className="bg-muted/30 rounded px-2 py-1 text-[9px] font-mono text-muted-foreground flex items-center justify-between">
-          <span>Feed: {dataSourceInfo.source.toUpperCase()} | OI: {dataSourceInfo.oiSource.toUpperCase()}</span>
+        <div className={`rounded px-2 py-1 text-[9px] font-mono flex items-center justify-between ${
+          dataSourceInfo.source === 'kotak' ? 'bg-profit/10 text-profit' : 'bg-destructive/10 text-destructive'
+        }`}>
+          <span>{dataSourceInfo.source === 'kotak' ? '● Live data: KOTAK' : '○ No live data — cannot trade'}</span>
           <span>{dataSourceInfo.lastUpdated > 0 ? formatAge(Date.now() - dataSourceInfo.lastUpdated) : '—'}</span>
         </div>
       )}

@@ -15,7 +15,7 @@ import { AnalyticsPanels } from '@/components/trading/AnalyticsPanels';
 import { BacktestPanel } from '@/components/trading/BacktestPanel';
 import { TradeTicketModal } from '@/components/trading/TradeTicketModal';
 import { useBacktest } from '@/hooks/useBacktest';
-import { useMarketData } from '@/hooks/useMarketData';
+import { useMarketData, type DataSource } from '@/hooks/useMarketData';
 import { useBrokerConnection } from '@/hooks/useBrokerConnection';
 import { useTradeStore } from '@/hooks/useTradeStore';
 import { supabase } from '@/integrations/supabase/client';
@@ -84,10 +84,10 @@ const Dashboard = () => {
       timestamp: Date.now(),
       strength: 'MEDIUM' as const,
       confidence: 100,
-      dataSource: dataSourceInfo.source as 'kotak' | 'yahoo' | 'nse' | 'synthetic' | 'none',
+      dataSource: dataSourceInfo.source as DataSource,
       isStale: false,
       dataTimestamp: Date.now(),
-      oiSource: dataSourceInfo.oiSource as 'nse' | 'synthetic',
+      oiSource: dataSourceInfo.oiSource as 'kotak' | 'none',
     };
     const modifiedSignal = { ...baseSignal, suggestedQty: params.quantity };
     await handleConfirmTrade(modifiedSignal, params.transactionType);
@@ -283,9 +283,9 @@ const Dashboard = () => {
         </header>
 
         {/* Data source warning banner */}
-        {!isPaperTrading && dataSourceInfo.source !== 'kotak' && (
-          <div className="mx-4 mt-1 bg-warning/10 border border-warning/30 rounded-md px-3 py-1.5 text-xs text-warning font-mono flex items-center gap-2">
-            ⚠ Execution disabled — live Kotak data not available. Source: {dataSourceInfo.source.toUpperCase()}. Connect broker for live trading.
+        {dataSourceInfo.source !== 'kotak' && (
+          <div className="mx-4 mt-1 bg-destructive/10 border border-destructive/30 rounded-md px-3 py-1.5 text-xs text-destructive font-mono flex items-center gap-2">
+            ⚠ No live data — connect Kotak broker to trade. Signals and execution disabled.
           </div>
         )}
 
