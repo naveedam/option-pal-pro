@@ -84,10 +84,10 @@ const Dashboard = () => {
       timestamp: Date.now(),
       strength: 'MEDIUM' as const,
       confidence: 100,
-      dataSource: dataSourceInfo.source as 'kotak' | 'yahoo' | 'nse' | 'synthetic' | 'none',
+      dataSource: dataSourceInfo.source as DataSource,
       isStale: false,
       dataTimestamp: Date.now(),
-      oiSource: dataSourceInfo.oiSource as 'nse' | 'synthetic',
+      oiSource: dataSourceInfo.oiSource as 'kotak' | 'none',
     };
     const modifiedSignal = { ...baseSignal, suggestedQty: params.quantity };
     await handleConfirmTrade(modifiedSignal, params.transactionType);
