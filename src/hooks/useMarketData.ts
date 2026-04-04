@@ -105,9 +105,9 @@ function getLivePrice(chain: OptionData[], strike: number, optionType: 'CE' | 'P
 }
 
 /** Determine OI source for a specific strike */
-function getStrikeOiSource(chain: OptionData[], strike: number): 'nse' | 'synthetic' {
+function getStrikeOiSource(chain: OptionData[], strike: number): 'kotak' | 'none' {
   const row = chain.find(r => r.strike === strike);
-  return row?.oiSource ?? 'synthetic';
+  return row?.oiSource === 'kotak' ? 'kotak' : 'none';
 }
 
 // ─── Signal Generation ──────────────────────────────────────────────
