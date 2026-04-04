@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { Zap, X, TrendingUp, Maximize2, Minimize2, Target, AlertTriangle, Bug } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import type { TradeSignal, DataSource } from '@/hooks/useMarketData';
+import { instrumentStore } from '@/services/instrumentStore';
 
 interface SignalPanelProps {
   signals: TradeSignal[];
@@ -139,13 +140,24 @@ function SignalCard({ signal, onConfirm, onDismiss, riskLimitReached, onExecuteT
       <p className="text-[10px] text-muted-foreground mb-2">{signal.reason}</p>
 
       {/* Debug info */}
-      {debugMode && (
-        <div className="bg-muted/50 rounded px-2 py-1 mb-2 text-[9px] font-mono text-muted-foreground space-y-0.5">
-          <div>Source: {signal.dataSource.toUpperCase()} | OI: {signal.oiSource.toUpperCase()}</div>
-          <div>Updated: {formatAge(Date.now() - signal.dataTimestamp)} | Stale: {signal.isStale ? 'YES' : 'NO'}</div>
-          <div>Strike: {signal.strike} | Timestamp: {new Date(signal.dataTimestamp).toLocaleTimeString()}</div>
-        </div>
-      )}
+      {debugMode && (() => {
+        const storeState = instrumentStore.getState();
+        let resolvedToken = '—';
+        try {
+          const inst = instrumentStore.resolve({ index: signal.index, strike: signal.strike, optionType: signal.optionType });
+          resolvedToken = inst.token;
+        } catch { /* not resolved */ }
+
+        return (
+          <div className="bg-muted/50 rounded px-2 py-1 mb-2 text-[9px] font-mono text-muted-foreground space-y-0.5">
+            <div>Source: {signal.dataSource.toUpperCase()} | OI: {signal.oiSource.toUpperCase()}</div>
+            <div>Updated: {formatAge(Date.now() - signal.dataTimestamp)} | Stale: {signal.isStale ? 'YES' : 'NO'}</div>
+            <div>Strike: {signal.strike} | Expiry: {storeState.expiry || '—'}</div>
+            <div>Token: {resolvedToken} | Store: {storeState.loaded ? `${storeState.instruments.length} instruments` : 'NOT LOADED'}</div>
+            <div>Timestamp: {new Date(signal.dataTimestamp).toLocaleTimeString()}</div>
+          </div>
+        );
+      })()}
 
       {/* Action buttons */}
       <div className="flex items-center gap-2">
@@ -178,6 +190,12 @@ export function SignalPanel({ signals, onConfirm, onDismiss, riskLimitReached, o
   const [expanded, setExpanded] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
 
+  // Subscribe to instrument store for reactivity
+  const instrumentState = useSyncExternalStore(
+    instrumentStore.subscribe.bind(instrumentStore),
+    () => instrumentStore.getState()
+  );
+
   const staleCount = signals.filter(s => s.isStale).length;
 
   const panelContent = (
@@ -199,6 +217,15 @@ export function SignalPanel({ signals, onConfirm, onDismiss, riskLimitReached, o
         }`}>
           <span>{dataSourceInfo.source === 'kotak' ? '● Live data: KOTAK' : '○ No live data — cannot trade'}</span>
           <span>{dataSourceInfo.lastUpdated > 0 ? formatAge(Date.now() - dataSourceInfo.lastUpdated) : '—'}</span>
+        </div>
+      )}
+      {/* Instrument store status */}
+      {debugMode && (
+        <div className={`rounded px-2 py-1 text-[9px] font-mono flex items-center justify-between ${
+          instrumentState.loaded ? 'bg-profit/10 text-profit' : 'bg-warning/10 text-warning'
+        }`}>
+          <span>{instrumentState.loaded ? `🔧 ${instrumentState.instruments.length} instruments` : instrumentState.loading ? '⏳ Loading instruments...' : '⚠ Instruments not loaded'}</span>
+          <span>{instrumentState.expiry ? `Exp: ${instrumentState.expiry}` : '—'}</span>
         </div>
       )}
       {signals.length === 0 && !riskLimitReached && (

@@ -46,7 +46,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { symbol, strike, optionType, quantity, orderType, product, transactionType } = body;
+    const { symbol, strike, optionType, quantity, orderType, product, transactionType, instrumentToken, tradingSymbol } = body;
 
     // STEP 5: Validate order payload
     if (!symbol || typeof symbol !== "string") {
@@ -127,6 +127,8 @@ Deno.serve(async (req) => {
       strike,
       optionType,
       quantity,
+      instrumentToken: instrumentToken || "none",
+      tradingSymbol: tradingSymbol || "none",
       tokenPrefix: session.access_token.substring(0, 8) + "...",
     });
 
@@ -158,10 +160,11 @@ Deno.serve(async (req) => {
           qt: String(quantity),
           rt: "DAY",
           tp: "0",
-          ts: symbol,
+          ts: tradingSymbol || symbol,
           tt: ttValue,
           st: String(strike),
           ot: optionType,
+          ...(instrumentToken ? { tk: instrumentToken } : {}),
         }),
       });
 

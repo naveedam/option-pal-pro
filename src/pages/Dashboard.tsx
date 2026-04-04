@@ -20,6 +20,7 @@ import { useBrokerConnection } from '@/hooks/useBrokerConnection';
 import { useTradeStore } from '@/hooks/useTradeStore';
 import { supabase } from '@/integrations/supabase/client';
 import { isBrokerAuthenticated, isBrokerFullyConnected } from '@/services/brokerSession';
+import { instrumentStore, InstrumentError } from '@/services/instrumentStore';
 import { LogOut, Plug, Eye, EyeOff } from 'lucide-react';
 
 const Dashboard = () => {
@@ -35,6 +36,13 @@ const Dashboard = () => {
   const broker = useBrokerConnection();
   const tradeStore = useTradeStore();
   const backtestResult = useBacktest(tradeStore.closedTrades);
+
+  // Load instrument store when broker is connected
+  useEffect(() => {
+    if (isBrokerAuthenticated(broker)) {
+      instrumentStore.load().catch(err => console.error('[Dashboard] Instrument load failed:', err));
+    }
+  }, [broker.auth]);
 
   const {
     marketData, signals, positions, tradesToday, dailyPnL,
@@ -125,11 +133,46 @@ const Dashboard = () => {
         toast.error('Execution blocked', { description: 'Live trading requires Kotak market data. Current source: ' + dataSourceInfo.source.toUpperCase() });
         return;
       }
+
+      // Resolve instrument token before placing order
+      let resolved;
+      try {
+        resolved = instrumentStore.resolve({ index: signal.index, strike: signal.strike, optionType: signal.optionType });
+      } catch (err) {
+        if (err instanceof InstrumentError) {
+          toast.error('Instrument not found', { description: err.message });
+        } else {
+          toast.error('Instrument resolution failed', { description: 'Could not resolve instrument token' });
+        }
+        return;
+      }
+
+      // Safety check: compare live LTP with signal price (2% threshold)
+      const chain = signal.index === 'NIFTY' ? marketData?.niftyChain : marketData?.sensexChain;
+      const row = chain?.find(r => r.strike === signal.strike);
+      const liveLTP = row ? (signal.optionType === 'CE' ? row.callLTP : row.putLTP) : 0;
+      if (liveLTP > 0 && signal.currentPrice > 0) {
+        const drift = Math.abs(liveLTP - signal.currentPrice) / signal.currentPrice;
+        if (drift > 0.02) {
+          toast.error('Price changed — re-evaluate signal', {
+            description: `Signal: ₹${signal.currentPrice.toFixed(2)} → Live: ₹${liveLTP.toFixed(2)} (${(drift * 100).toFixed(1)}% drift)`,
+          });
+          return;
+        }
+      }
+
+      console.log('[Order] Resolved instrument:', resolved);
+      console.log('[Order] Payload:', {
+        instrument_token: resolved.token, symbol: signal.index, strike: signal.strike,
+        optionType: signal.optionType, quantity: signal.suggestedQty, transactionType,
+      });
+
       try {
         const { data, error } = await supabase.functions.invoke('kotak-place-order', {
           body: {
             symbol: signal.index, strike: signal.strike, optionType: signal.optionType,
             quantity: signal.suggestedQty, orderType: 'MARKET', product: 'MIS', transactionType,
+            instrumentToken: resolved.token, tradingSymbol: resolved.tradingSymbol,
           },
         });
         if (error) {
@@ -139,7 +182,7 @@ const Dashboard = () => {
         if (data?.success) {
           const position = addLivePosition(signal, data.orderId);
           toast.success(`✅ Live order placed: ${signal.index} ${signal.strike} ${signal.optionType}`, {
-            description: `Qty: ${signal.suggestedQty} | Order ID: ${data.orderId}`,
+            description: `Qty: ${signal.suggestedQty} | Token: ${resolved.token} | Order ID: ${data.orderId}`,
           });
           position.dbId = data.orderId;
         } else {
