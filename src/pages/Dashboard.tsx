@@ -327,8 +327,34 @@ const Dashboard = () => {
 
         {/* Data source warning banner */}
         {dataSourceInfo.source !== 'kotak' && (
-          <div className="mx-4 mt-1 bg-destructive/10 border border-destructive/30 rounded-md px-3 py-1.5 text-xs text-destructive font-mono flex items-center gap-2">
-            ⚠ No live data — connect Kotak broker to trade. Signals and execution disabled.
+          <div className="mx-4 mt-1 bg-destructive/10 border border-destructive/30 rounded-md px-3 py-1.5 text-xs text-destructive font-mono flex items-center justify-between">
+            <span>
+              {feedHealth.sessionError === 'SESSION_EXPIRED'
+                ? '⚠ Kotak session expired — reconnect broker to resume live data'
+                : feedHealth.sessionError === 'NO_SESSION'
+                  ? '⚠ No active Kotak session — connect broker to trade'
+                  : `⚠ No live data — ${feedHealth.errorMessage || 'connect Kotak broker to trade'}`}
+            </span>
+            <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-6 text-[10px] font-mono border-destructive/50 text-destructive hover:bg-destructive/10"
+                onClick={() => retryFeed()}
+              >
+                ↻ Retry
+              </Button>
+              {(feedHealth.sessionError === 'SESSION_EXPIRED' || feedHealth.sessionError === 'NO_SESSION') && (
+                <Button
+                  variant="terminal"
+                  size="sm"
+                  className="h-6 text-[10px] font-mono gap-1"
+                  onClick={openBrokerDialog}
+                >
+                  <Plug className="w-3 h-3" /> Reconnect Kotak
+                </Button>
+              )}
+            </div>
           </div>
         )}
 
