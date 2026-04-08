@@ -421,7 +421,7 @@ Deno.serve(async (req) => {
 
     console.log(`[MarketData] Fetching quote for ${symbolKey} → ${neoSymbol}`);
 
-    const quoteResult = await fetchQuotesSDK(baseUrl, accessToken, sid, [neoSymbol], "LTP");
+    const quoteResult = await fetchQuotesSDK(baseUrl, accessToken, sid, consumerKey, [neoSymbol], "LTP");
 
     if (quoteResult.error === "SESSION_EXPIRED") {
       await adminClient.from("broker_sessions")
