@@ -259,6 +259,7 @@ async function buildOptionChain(
   baseUrl: string,
   accessToken: string,
   sid: string,
+  consumerKey: string,
   optionTokens: Array<{ neo_symbol: string; strike: number; optionType: string }>,
   atmStrike: number,
 ): Promise<{ chain: any[]; totalCallOI: number; totalPutOI: number }> {
