@@ -61,6 +61,7 @@ async function fetchQuotesSDK(
   baseUrl: string,
   accessToken: string,
   sid: string,
+  consumerKey: string,
   neoSymbols: string[], // e.g. ["nse_cm|Nifty 50"]
   quoteType: string = "LTP",
 ): Promise<{ data: any; error: string | null; details: any }> {
@@ -68,14 +69,16 @@ async function fetchQuotesSDK(
   const url = `${baseUrl}/${QUOTES_PATH}/${symbolsParam}/${quoteType}`;
 
   console.log(`[Quotes] GET ${url}`);
-  console.log(`[Quotes] Token present: ${!!accessToken}, SID present: ${!!sid}`);
+  console.log(`[Quotes] Token present: ${!!accessToken}, SID present: ${!!sid}, ConsumerKey present: ${!!consumerKey}`);
   console.log(`[Quotes] neo_symbols: ${neoSymbols.join(",")}`);
 
   try {
+    // Kotak Neo API expects: Authorization = consumer_key, Auth = access_token
     const res = await fetchWithRetry(url, {
       method: "GET",
       headers: {
-        "Authorization": `Bearer ${accessToken}`,
+        "Authorization": consumerKey,
+        "Auth": accessToken,
         "neo-fin-key": "neotradeapi",
         "sid": sid,
       },
