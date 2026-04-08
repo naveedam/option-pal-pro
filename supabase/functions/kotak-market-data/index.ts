@@ -404,8 +404,9 @@ Deno.serve(async (req) => {
     const baseUrl = (session.base_url || FALLBACK_BASE).replace(/\/$/, "");
     const accessToken = session.access_token;
     const sid = session.session_token || "";
+    const consumerKey = session.consumer_key || "";
 
-    console.log(`[MarketData] baseUrl=${baseUrl} token=${!!accessToken} sid=${!!sid}`);
+    console.log(`[MarketData] baseUrl=${baseUrl} token=${!!accessToken} sid=${!!sid} consumerKey=${!!consumerKey}`);
 
     // ─── Step 1: Fetch spot price via SDK-aligned quote ─────────
     const symbolKey = symbol?.toUpperCase() || "NIFTY";
