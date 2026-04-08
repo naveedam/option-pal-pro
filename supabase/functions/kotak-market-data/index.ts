@@ -492,10 +492,10 @@ Deno.serve(async (req) => {
 
     try {
       console.log(`[MarketData] Building option chain, ATM: ${atmStrike}, range: ${strikeRange}`);
-      const optionTokens = await fetchNiftyOptionTokens(baseUrl, accessToken, sid, atmStrike, strikeRange);
+      const optionTokens = await fetchNiftyOptionTokens(baseUrl, accessToken, sid, consumerKey, atmStrike, strikeRange);
 
       if (optionTokens.length > 0) {
-        const result = await buildOptionChain(baseUrl, accessToken, sid, optionTokens, atmStrike);
+        const result = await buildOptionChain(baseUrl, accessToken, sid, consumerKey, optionTokens, atmStrike);
         niftyChain = result.chain;
         totalCallOI = result.totalCallOI;
         totalPutOI = result.totalPutOI;
