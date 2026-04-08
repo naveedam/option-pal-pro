@@ -133,14 +133,15 @@ function parseSpotFromQuote(quoteData: any): { spot: number; change: number } {
 }
 
 // ─── Fetch Scrip Master CSV file paths ──────────────────────────────
-async function fetchScripMasterPaths(baseUrl: string, accessToken: string, sid: string): Promise<any> {
+async function fetchScripMasterPaths(baseUrl: string, accessToken: string, sid: string, consumerKey: string): Promise<any> {
   const url = `${baseUrl}/${SCRIP_MASTER_PATH}`;
   console.log(`[ScripMaster] GET ${url}`);
 
   const res = await fetchWithRetry(url, {
     method: "GET",
     headers: {
-      "Authorization": `Bearer ${accessToken}`,
+      "Authorization": consumerKey,
+      "Auth": accessToken,
       "neo-fin-key": "neotradeapi",
       "sid": sid,
     },
