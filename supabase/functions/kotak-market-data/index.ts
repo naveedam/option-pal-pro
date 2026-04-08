@@ -161,11 +161,12 @@ async function fetchNiftyOptionTokens(
   baseUrl: string,
   accessToken: string,
   sid: string,
+  consumerKey: string,
   atmStrike: number,
   strikeRange: number,
 ): Promise<Array<{ neo_symbol: string; strike: number; optionType: string }>> {
   try {
-    const pathsData = await fetchScripMasterPaths(baseUrl, accessToken, sid);
+    const pathsData = await fetchScripMasterPaths(baseUrl, accessToken, sid, consumerKey);
     console.log(`[ScripMaster] Response keys: ${JSON.stringify(Object.keys(pathsData))}`);
 
     const fileList = pathsData?.filesPaths || pathsData?.data?.filesPaths || pathsData?.result || [];
