@@ -61,6 +61,7 @@ async function fetchQuotesSDK(
   baseUrl: string,
   accessToken: string,
   sid: string,
+  consumerKey: string,
   neoSymbols: string[], // e.g. ["nse_cm|Nifty 50"]
   quoteType: string = "LTP",
 ): Promise<{ data: any; error: string | null; details: any }> {
@@ -68,14 +69,16 @@ async function fetchQuotesSDK(
   const url = `${baseUrl}/${QUOTES_PATH}/${symbolsParam}/${quoteType}`;
 
   console.log(`[Quotes] GET ${url}`);
-  console.log(`[Quotes] Token present: ${!!accessToken}, SID present: ${!!sid}`);
+  console.log(`[Quotes] Token present: ${!!accessToken}, SID present: ${!!sid}, ConsumerKey present: ${!!consumerKey}`);
   console.log(`[Quotes] neo_symbols: ${neoSymbols.join(",")}`);
 
   try {
+    // Kotak Neo API expects: Authorization = consumer_key, Auth = access_token
     const res = await fetchWithRetry(url, {
       method: "GET",
       headers: {
-        "Authorization": `Bearer ${accessToken}`,
+        "Authorization": consumerKey,
+        "Auth": accessToken,
         "neo-fin-key": "neotradeapi",
         "sid": sid,
       },
@@ -130,14 +133,15 @@ function parseSpotFromQuote(quoteData: any): { spot: number; change: number } {
 }
 
 // ─── Fetch Scrip Master CSV file paths ──────────────────────────────
-async function fetchScripMasterPaths(baseUrl: string, accessToken: string, sid: string): Promise<any> {
+async function fetchScripMasterPaths(baseUrl: string, accessToken: string, sid: string, consumerKey: string): Promise<any> {
   const url = `${baseUrl}/${SCRIP_MASTER_PATH}`;
   console.log(`[ScripMaster] GET ${url}`);
 
   const res = await fetchWithRetry(url, {
     method: "GET",
     headers: {
-      "Authorization": `Bearer ${accessToken}`,
+      "Authorization": consumerKey,
+      "Auth": accessToken,
       "neo-fin-key": "neotradeapi",
       "sid": sid,
     },
@@ -157,11 +161,12 @@ async function fetchNiftyOptionTokens(
   baseUrl: string,
   accessToken: string,
   sid: string,
+  consumerKey: string,
   atmStrike: number,
   strikeRange: number,
 ): Promise<Array<{ neo_symbol: string; strike: number; optionType: string }>> {
   try {
-    const pathsData = await fetchScripMasterPaths(baseUrl, accessToken, sid);
+    const pathsData = await fetchScripMasterPaths(baseUrl, accessToken, sid, consumerKey);
     console.log(`[ScripMaster] Response keys: ${JSON.stringify(Object.keys(pathsData))}`);
 
     const fileList = pathsData?.filesPaths || pathsData?.data?.filesPaths || pathsData?.result || [];
@@ -254,6 +259,7 @@ async function buildOptionChain(
   baseUrl: string,
   accessToken: string,
   sid: string,
+  consumerKey: string,
   optionTokens: Array<{ neo_symbol: string; strike: number; optionType: string }>,
   atmStrike: number,
 ): Promise<{ chain: any[]; totalCallOI: number; totalPutOI: number }> {
@@ -272,7 +278,7 @@ async function buildOptionChain(
     const neoSymbols = batch.map(t => t.neo_symbol);
 
     try {
-      const { data: quotesData, error } = await fetchQuotesSDK(baseUrl, accessToken, sid, neoSymbols, "ALL");
+      const { data: quotesData, error } = await fetchQuotesSDK(baseUrl, accessToken, sid, consumerKey, neoSymbols, "ALL");
       if (error === "SESSION_EXPIRED") return { chain: [], totalCallOI: 0, totalPutOI: 0 };
       if (error || !quotesData) continue;
 
@@ -398,8 +404,9 @@ Deno.serve(async (req) => {
     const baseUrl = (session.base_url || FALLBACK_BASE).replace(/\/$/, "");
     const accessToken = session.access_token;
     const sid = session.session_token || "";
+    const consumerKey = session.consumer_key || "";
 
-    console.log(`[MarketData] baseUrl=${baseUrl} token=${!!accessToken} sid=${!!sid}`);
+    console.log(`[MarketData] baseUrl=${baseUrl} token=${!!accessToken} sid=${!!sid} consumerKey=${!!consumerKey}`);
 
     // ─── Step 1: Fetch spot price via SDK-aligned quote ─────────
     const symbolKey = symbol?.toUpperCase() || "NIFTY";
@@ -414,7 +421,7 @@ Deno.serve(async (req) => {
 
     console.log(`[MarketData] Fetching quote for ${symbolKey} → ${neoSymbol}`);
 
-    const quoteResult = await fetchQuotesSDK(baseUrl, accessToken, sid, [neoSymbol], "LTP");
+    const quoteResult = await fetchQuotesSDK(baseUrl, accessToken, sid, consumerKey, [neoSymbol], "LTP");
 
     if (quoteResult.error === "SESSION_EXPIRED") {
       await adminClient.from("broker_sessions")
@@ -485,10 +492,10 @@ Deno.serve(async (req) => {
 
     try {
       console.log(`[MarketData] Building option chain, ATM: ${atmStrike}, range: ${strikeRange}`);
-      const optionTokens = await fetchNiftyOptionTokens(baseUrl, accessToken, sid, atmStrike, strikeRange);
+      const optionTokens = await fetchNiftyOptionTokens(baseUrl, accessToken, sid, consumerKey, atmStrike, strikeRange);
 
       if (optionTokens.length > 0) {
-        const result = await buildOptionChain(baseUrl, accessToken, sid, optionTokens, atmStrike);
+        const result = await buildOptionChain(baseUrl, accessToken, sid, consumerKey, optionTokens, atmStrike);
         niftyChain = result.chain;
         totalCallOI = result.totalCallOI;
         totalPutOI = result.totalPutOI;
