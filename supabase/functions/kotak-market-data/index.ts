@@ -448,9 +448,11 @@ Deno.serve(async (req) => {
     // is strict about both. Known valid quote types in lowercase: ltp/ohlc/all.
     // Neosymbol formats vary across Kotak gateways: "nse_cm|<token>", "NSE|<token>".
     const niftyToken = symbolKey === "NIFTY" ? "26000" : symbolKey === "BANKNIFTY" ? "26009" : "1";
+    const indexName = symbolKey === "NIFTY" ? "Nifty 50" : symbolKey === "BANKNIFTY" ? "Nifty Bank" : "SENSEX";
+    // Working format on Kotak Neo gateway: "nse_cm|<IndexName>" with quote_type "ltp"
     const NEO_SYMBOL_VARIANTS = symbolKey === "SENSEX"
-      ? ["bse_cm|1", "BSE|1"]
-      : [`nse_cm|${niftyToken}`, `NSE|${niftyToken}`, `nse_cm|${symbolKey === "NIFTY" ? "Nifty 50" : "Nifty Bank"}`];
+      ? [`bse_cm|${indexName}`, "bse_cm|1", "BSE|1"]
+      : [`nse_cm|${indexName}`, `nse_cm|${niftyToken}`, `NSE|${niftyToken}`];
     const QUOTE_TYPE_VARIANTS = ["ltp", "ohlc", "all"];
 
     let quoteResult: any = null;
