@@ -15,11 +15,14 @@ const FALLBACK_BASE = "https://gw-napi.kotaksecurities.com";
 const QUOTES_PATH = "script-details/1.0/quotes/neosymbol";
 const SCRIP_MASTER_PATH = "script-details/1.0/masterscrip/file-paths";
 
-// ─── Instrument mapping (SDK uses string names for indices) ──────────
+// ─── Instrument mapping ──────────────────────────────────────────────
+// Kotak Neo quote API requires `exchange_segment|instrument_token` (numeric).
+// Index spot tokens (NSE_CM): NIFTY 50 = 26000, NIFTY BANK = 26009
+// SENSEX (BSE_CM)            = 1
 const INSTRUMENT_NEO_SYMBOLS: Record<string, string> = {
-  NIFTY:     "nse_cm|Nifty 50",
-  BANKNIFTY: "nse_cm|Nifty Bank",
-  SENSEX:    "bse_cm|SENSEX",
+  NIFTY:     "nse_cm|26000",
+  BANKNIFTY: "nse_cm|26009",
+  SENSEX:    "bse_cm|1",
 };
 
 // ─── Retry with backoff ─────────────────────────────────────────────
@@ -128,13 +131,17 @@ async function fetchQuotesSDK(
 
 // ─── Parse spot price from SDK quote response ───────────────────────
 function parseSpotFromQuote(quoteData: any): { spot: number; change: number } {
-  // SDK returns various shapes: { message: [...] }, { data: [...] }, or direct object
-  const msg = quoteData?.message?.[0] || quoteData?.data?.[0] || quoteData?.message || quoteData;
+  // Kotak returns various shapes:
+  //   - Array directly: [{ ltp: "23997.55", ... }]
+  //   - { message: [...] } / { data: [...] }
+  //   - direct object
+  const arr = Array.isArray(quoteData) ? quoteData : (quoteData?.message || quoteData?.data);
+  const msg = Array.isArray(arr) ? arr[0] : (arr || quoteData);
   const spot = parseFloat(
-    msg?.last_traded_price || msg?.ltp || msg?.LastTradedPrice || "0"
+    msg?.ltp || msg?.last_traded_price || msg?.LastTradedPrice || msg?.lastPrice || "0"
   );
   const change = parseFloat(
-    msg?.percentage_change || msg?.change || msg?.percentChange || "0"
+    msg?.percentage_change || msg?.change || msg?.percentChange || msg?.cng || "0"
   );
   return { spot, change };
 }
@@ -285,7 +292,7 @@ async function buildOptionChain(
     const neoSymbols = batch.map(t => t.neo_symbol);
 
     try {
-      const { data: quotesData, error } = await fetchQuotesSDK(baseUrl, accessToken, sid, consumerKey, neoSymbols, "ALL");
+      const { data: quotesData, error } = await fetchQuotesSDK(baseUrl, accessToken, sid, consumerKey, neoSymbols, "all");
       if (error === "SESSION_EXPIRED") return { chain: [], totalCallOI: 0, totalPutOI: 0 };
       if (error || !quotesData) continue;
 
@@ -437,7 +444,31 @@ Deno.serve(async (req) => {
 
     console.log(`[MarketData] Fetching quote for ${symbolKey} → ${neoSymbol}`);
 
-    const quoteResult = await fetchQuotesSDK(baseUrl, accessToken, sid, consumerKey, [neoSymbol], "LTP");
+    // Try multiple (neoSymbol, quote_type) variants — Kotak's quote endpoint
+    // is strict about both. Known valid quote types in lowercase: ltp/ohlc/all.
+    // Neosymbol formats vary across Kotak gateways: "nse_cm|<token>", "NSE|<token>".
+    const niftyToken = symbolKey === "NIFTY" ? "26000" : symbolKey === "BANKNIFTY" ? "26009" : "1";
+    const indexName = symbolKey === "NIFTY" ? "Nifty 50" : symbolKey === "BANKNIFTY" ? "Nifty Bank" : "SENSEX";
+    // Working format on Kotak Neo gateway: "nse_cm|<IndexName>" with quote_type "ltp"
+    const NEO_SYMBOL_VARIANTS = symbolKey === "SENSEX"
+      ? [`bse_cm|${indexName}`, "bse_cm|1", "BSE|1"]
+      : [`nse_cm|${indexName}`, `nse_cm|${niftyToken}`, `NSE|${niftyToken}`];
+    const QUOTE_TYPE_VARIANTS = ["ltp", "ohlc", "all"];
+
+    let quoteResult: any = null;
+    outer: for (const ns of NEO_SYMBOL_VARIANTS) {
+      for (const qt of QUOTE_TYPE_VARIANTS) {
+        console.log(`[MarketData] Trying neoSymbol="${ns}" quote_type="${qt}"`);
+        const r = await fetchQuotesSDK(baseUrl, accessToken, sid, consumerKey, [ns], qt);
+        if (!r.error && r.data) {
+          quoteResult = r;
+          console.log(`[MarketData] ✓ Success with neoSymbol="${ns}" quote_type="${qt}"`);
+          break outer;
+        }
+        if (r.error === "SESSION_EXPIRED") { quoteResult = r; break outer; }
+        quoteResult = r;
+      }
+    }
 
     if (quoteResult.error === "SESSION_EXPIRED") {
       await adminClient.from("broker_sessions")
