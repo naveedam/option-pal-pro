@@ -440,7 +440,21 @@ Deno.serve(async (req) => {
 
     console.log(`[MarketData] Fetching quote for ${symbolKey} → ${neoSymbol}`);
 
-    const quoteResult = await fetchQuotesSDK(baseUrl, accessToken, sid, consumerKey, [neoSymbol], "LTP");
+    // Try multiple quote_type variants — Kotak's API is case/spelling sensitive
+    // and accepted values vary by base_url. Known SDK values: "ltp", "ohlc", "depth", "all".
+    const QUOTE_TYPE_VARIANTS = ["ltp", "LTP", "ohlc", "OHLC", "all", "ALL"];
+    let quoteResult: any = null;
+    for (const qt of QUOTE_TYPE_VARIANTS) {
+      console.log(`[MarketData] Trying quote_type="${qt}"`);
+      const r = await fetchQuotesSDK(baseUrl, accessToken, sid, consumerKey, [neoSymbol], qt);
+      if (!r.error && r.data) { quoteResult = r; console.log(`[MarketData] ✓ quote_type="${qt}" succeeded`); break; }
+      // For session errors, abort the fallback loop
+      if (r.error === "SESSION_EXPIRED") { quoteResult = r; break; }
+      // Only keep retrying on "Invalid type"; for other errors stop early
+      const desc = String(r.details?.description || r.details?.message || "").toLowerCase();
+      if (!desc.includes("invalid type")) { quoteResult = r; break; }
+      quoteResult = r;
+    }
 
     if (quoteResult.error === "SESSION_EXPIRED") {
       await adminClient.from("broker_sessions")
