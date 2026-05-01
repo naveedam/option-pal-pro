@@ -15,11 +15,14 @@ const FALLBACK_BASE = "https://gw-napi.kotaksecurities.com";
 const QUOTES_PATH = "script-details/1.0/quotes/neosymbol";
 const SCRIP_MASTER_PATH = "script-details/1.0/masterscrip/file-paths";
 
-// ─── Instrument mapping (SDK uses string names for indices) ──────────
+// ─── Instrument mapping ──────────────────────────────────────────────
+// Kotak Neo quote API requires `exchange_segment|instrument_token` (numeric).
+// Index spot tokens (NSE_CM): NIFTY 50 = 26000, NIFTY BANK = 26009
+// SENSEX (BSE_CM)            = 1
 const INSTRUMENT_NEO_SYMBOLS: Record<string, string> = {
-  NIFTY:     "nse_cm|Nifty 50",
-  BANKNIFTY: "nse_cm|Nifty Bank",
-  SENSEX:    "bse_cm|SENSEX",
+  NIFTY:     "nse_cm|26000",
+  BANKNIFTY: "nse_cm|26009",
+  SENSEX:    "bse_cm|1",
 };
 
 // ─── Retry with backoff ─────────────────────────────────────────────
