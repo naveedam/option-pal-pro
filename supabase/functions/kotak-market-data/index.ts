@@ -131,13 +131,17 @@ async function fetchQuotesSDK(
 
 // ─── Parse spot price from SDK quote response ───────────────────────
 function parseSpotFromQuote(quoteData: any): { spot: number; change: number } {
-  // SDK returns various shapes: { message: [...] }, { data: [...] }, or direct object
-  const msg = quoteData?.message?.[0] || quoteData?.data?.[0] || quoteData?.message || quoteData;
+  // Kotak returns various shapes:
+  //   - Array directly: [{ ltp: "23997.55", ... }]
+  //   - { message: [...] } / { data: [...] }
+  //   - direct object
+  const arr = Array.isArray(quoteData) ? quoteData : (quoteData?.message || quoteData?.data);
+  const msg = Array.isArray(arr) ? arr[0] : (arr || quoteData);
   const spot = parseFloat(
-    msg?.last_traded_price || msg?.ltp || msg?.LastTradedPrice || "0"
+    msg?.ltp || msg?.last_traded_price || msg?.LastTradedPrice || msg?.lastPrice || "0"
   );
   const change = parseFloat(
-    msg?.percentage_change || msg?.change || msg?.percentChange || "0"
+    msg?.percentage_change || msg?.change || msg?.percentChange || msg?.cng || "0"
   );
   return { spot, change };
 }
