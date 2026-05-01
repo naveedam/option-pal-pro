@@ -292,7 +292,7 @@ async function buildOptionChain(
     const neoSymbols = batch.map(t => t.neo_symbol);
 
     try {
-      const { data: quotesData, error } = await fetchQuotesSDK(baseUrl, accessToken, sid, consumerKey, neoSymbols, "ALL");
+      const { data: quotesData, error } = await fetchQuotesSDK(baseUrl, accessToken, sid, consumerKey, neoSymbols, "all");
       if (error === "SESSION_EXPIRED") return { chain: [], totalCallOI: 0, totalPutOI: 0 };
       if (error || !quotesData) continue;
 
