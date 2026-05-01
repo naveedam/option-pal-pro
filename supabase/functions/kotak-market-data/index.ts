@@ -57,23 +57,24 @@ async function fetchWithRetry(
 // ─── SDK-aligned quote fetch (GET) ──────────────────────────────────
 // URL: {base}/script-details/1.0/quotes/neosymbol/{neo_symbols}/{quote_type}
 // neo_symbols format: "exchange_segment|token" comma-separated, URL-encoded
+// Kotak Neo headers: Authorization = consumer_key (raw), Auth = access_token, sid = session_token
 async function fetchQuotesSDK(
   baseUrl: string,
   accessToken: string,
   sid: string,
   consumerKey: string,
-  neoSymbols: string[], // e.g. ["nse_cm|Nifty 50"]
+  neoSymbols: string[], // e.g. ["nse_cm|Nifty 50"] or ["nse_fo|54321"]
   quoteType: string = "LTP",
-): Promise<{ data: any; error: string | null; details: any }> {
+): Promise<{ data: any; error: string | null; details: any; endpoint: string; payload: any }> {
   const symbolsParam = encodeURIComponent(neoSymbols.join(","));
   const url = `${baseUrl}/${QUOTES_PATH}/${symbolsParam}/${quoteType}`;
+  const payload = { neo_symbols: neoSymbols, quote_type: quoteType };
 
   console.log(`[Quotes] GET ${url}`);
-  console.log(`[Quotes] Token present: ${!!accessToken}, SID present: ${!!sid}, ConsumerKey present: ${!!consumerKey}`);
-  console.log(`[Quotes] neo_symbols: ${neoSymbols.join(",")}`);
+  console.log(`[Quotes] Payload:`, JSON.stringify(payload));
+  console.log(`[Quotes] Auth present — token:${!!accessToken} sid:${!!sid} consumerKey:${!!consumerKey}`);
 
   try {
-    // Kotak Neo API expects: Authorization = consumer_key, Auth = access_token
     const res = await fetchWithRetry(url, {
       method: "GET",
       headers: {
@@ -81,41 +82,47 @@ async function fetchQuotesSDK(
         "Auth": accessToken,
         "neo-fin-key": "neotradeapi",
         "sid": sid,
+        "Accept": "application/json",
       },
     }, 2, 1000);
 
     const text = await res.text();
-    console.log(`[Quotes] Response ${res.status}: ${text.substring(0, 500)}`);
+    console.log(`[Quotes] Response ${res.status} from ${url}:`, text.substring(0, 800));
 
     if (res.status === 401 || res.status === 403) {
-      return { data: null, error: "SESSION_EXPIRED", details: text.substring(0, 300) };
+      return { data: null, error: "SESSION_EXPIRED", details: text.substring(0, 300), endpoint: url, payload };
     }
 
     if (!res.ok) {
+      console.error(`[Quotes] MARKET_DATA_UNAVAILABLE — endpoint=${url} payload=${JSON.stringify(payload)} status=${res.status} body=${text.substring(0, 300)}`);
       return {
         data: null,
         error: `QUOTE_API_ERROR`,
-        details: { status: res.status, body: text.substring(0, 300), url },
+        details: { status: res.status, body: text.substring(0, 300), url, payload },
+        endpoint: url,
+        payload,
       };
     }
 
     try {
       const data = JSON.parse(text);
-      
-      // Check for API-level errors
+      console.log(`[Quotes] Parsed Kotak response:`, JSON.stringify(data).substring(0, 600));
+
       if (data?.fault) {
-        return { data: null, error: "QUOTE_FAULT", details: data.fault };
+        console.error(`[Quotes] FAULT — endpoint=${url} payload=${JSON.stringify(payload)} fault=${JSON.stringify(data.fault)}`);
+        return { data: null, error: "QUOTE_FAULT", details: data.fault, endpoint: url, payload };
       }
       if (data?.stat === "Not_Ok") {
-        return { data: null, error: "QUOTE_REJECTED", details: data?.emsg || data };
+        console.error(`[Quotes] REJECTED — endpoint=${url} payload=${JSON.stringify(payload)} emsg=${data?.emsg}`);
+        return { data: null, error: "QUOTE_REJECTED", details: data?.emsg || data, endpoint: url, payload };
       }
 
-      return { data, error: null, details: null };
+      return { data, error: null, details: null, endpoint: url, payload };
     } catch {
-      return { data: null, error: "INVALID_JSON", details: text.substring(0, 200) };
+      return { data: null, error: "INVALID_JSON", details: text.substring(0, 200), endpoint: url, payload };
     }
   } catch (err: any) {
-    return { data: null, error: "NETWORK_ERROR", details: err.message };
+    return { data: null, error: "NETWORK_ERROR", details: err.message, endpoint: url, payload };
   }
 }
 
@@ -290,6 +297,15 @@ async function buildOptionChain(
         const tokenInfo = batch[j];
         const strike = tokenInfo.strike;
 
+        // Validate quote shape — require at least LTP or OI/Volume to count as valid
+        const hasLTP = quote?.last_traded_price !== undefined || quote?.ltp !== undefined;
+        const hasOI  = quote?.open_interest !== undefined || quote?.oi !== undefined;
+        const hasVol = quote?.volume !== undefined;
+        if (!hasLTP && !hasOI && !hasVol) {
+          console.warn(`[OptionChain] Quote missing LTP/OI/Volume for ${tokenInfo.neo_symbol}:`, JSON.stringify(quote).substring(0, 200));
+          continue;
+        }
+
         if (!strikeMap.has(strike)) {
           strikeMap.set(strike, {
             strike, callLTP: 0, putLTP: 0, callOI: 0, putOI: 0,
@@ -437,7 +453,14 @@ Deno.serve(async (req) => {
     let niftyChange = 0;
 
     if (quoteResult.error || !quoteResult.data) {
-      console.error(`[MarketData] Quote failed: ${quoteResult.error}`, quoteResult.details);
+      console.error(`[MarketData] MARKET_DATA_UNAVAILABLE`, {
+        endpoint: quoteResult.endpoint,
+        payload: quoteResult.payload,
+        quoteError: quoteResult.error,
+        quoteDetails: quoteResult.details,
+      });
+
+      const message = "Kotak API rejected request — check instrument token or endpoint";
 
       if (validateOnly) {
         return new Response(
@@ -445,7 +468,8 @@ Deno.serve(async (req) => {
             success: false,
             error: "MARKET_DATA_UNAVAILABLE",
             code: "MARKET_VALIDATION_FAILED",
-            details: { quoteError: quoteResult.error, quoteDetails: quoteResult.details },
+            message,
+            details: { quoteError: quoteResult.error, quoteDetails: quoteResult.details, endpoint: quoteResult.endpoint, payload: quoteResult.payload },
             validation: { auth: "connected", marketData: "disconnected", trading: "connected", symbol: symbolKey, quote: 0 },
           }),
           { headers }
@@ -453,7 +477,13 @@ Deno.serve(async (req) => {
       }
 
       return new Response(
-        JSON.stringify({ success: false, error: "MARKET_DATA_UNAVAILABLE", code: "MARKET_DATA_UNAVAILABLE", details: quoteResult.details }),
+        JSON.stringify({
+          success: false,
+          error: "MARKET_DATA_UNAVAILABLE",
+          code: "MARKET_DATA_UNAVAILABLE",
+          message,
+          details: { quoteError: quoteResult.error, quoteDetails: quoteResult.details, endpoint: quoteResult.endpoint, payload: quoteResult.payload },
+        }),
         { status: 200, headers }
       );
     }

@@ -155,6 +155,19 @@ export class MarketDataProvider {
         };
       }
 
+      if (data?.code === 'MARKET_DATA_UNAVAILABLE' || data?.code === 'MARKET_VALIDATION_FAILED') {
+        console.error('[MarketData] Kotak rejected request:', data);
+        this.kotakCircuit.recordFailure();
+        return {
+          data: emptyMarketData(),
+          isStale: true,
+          lastFreshAt: this.lastFreshTimestamp,
+          error: data.message || 'Kotak API rejected request — check instrument token or endpoint',
+          source: 'none',
+          oiSource: 'none',
+        };
+      }
+
       if (!data?.success || !data?.data) {
         throw new Error(data?.error || 'Kotak data unavailable');
       }
