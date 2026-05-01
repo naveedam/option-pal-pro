@@ -440,20 +440,28 @@ Deno.serve(async (req) => {
 
     console.log(`[MarketData] Fetching quote for ${symbolKey} → ${neoSymbol}`);
 
-    // Try multiple quote_type variants — Kotak's API is case/spelling sensitive
-    // and accepted values vary by base_url. Known SDK values: "ltp", "ohlc", "depth", "all".
-    const QUOTE_TYPE_VARIANTS = ["ltp", "LTP", "ohlc", "OHLC", "all", "ALL"];
+    // Try multiple (neoSymbol, quote_type) variants — Kotak's quote endpoint
+    // is strict about both. Known valid quote types in lowercase: ltp/ohlc/all.
+    // Neosymbol formats vary across Kotak gateways: "nse_cm|<token>", "NSE|<token>".
+    const niftyToken = symbolKey === "NIFTY" ? "26000" : symbolKey === "BANKNIFTY" ? "26009" : "1";
+    const NEO_SYMBOL_VARIANTS = symbolKey === "SENSEX"
+      ? ["bse_cm|1", "BSE|1"]
+      : [`nse_cm|${niftyToken}`, `NSE|${niftyToken}`, `nse_cm|${symbolKey === "NIFTY" ? "Nifty 50" : "Nifty Bank"}`];
+    const QUOTE_TYPE_VARIANTS = ["ltp", "ohlc", "all"];
+
     let quoteResult: any = null;
-    for (const qt of QUOTE_TYPE_VARIANTS) {
-      console.log(`[MarketData] Trying quote_type="${qt}"`);
-      const r = await fetchQuotesSDK(baseUrl, accessToken, sid, consumerKey, [neoSymbol], qt);
-      if (!r.error && r.data) { quoteResult = r; console.log(`[MarketData] ✓ quote_type="${qt}" succeeded`); break; }
-      // For session errors, abort the fallback loop
-      if (r.error === "SESSION_EXPIRED") { quoteResult = r; break; }
-      // Only keep retrying on "Invalid type"; for other errors stop early
-      const desc = String(r.details?.description || r.details?.message || "").toLowerCase();
-      if (!desc.includes("invalid type")) { quoteResult = r; break; }
-      quoteResult = r;
+    outer: for (const ns of NEO_SYMBOL_VARIANTS) {
+      for (const qt of QUOTE_TYPE_VARIANTS) {
+        console.log(`[MarketData] Trying neoSymbol="${ns}" quote_type="${qt}"`);
+        const r = await fetchQuotesSDK(baseUrl, accessToken, sid, consumerKey, [ns], qt);
+        if (!r.error && r.data) {
+          quoteResult = r;
+          console.log(`[MarketData] ✓ Success with neoSymbol="${ns}" quote_type="${qt}"`);
+          break outer;
+        }
+        if (r.error === "SESSION_EXPIRED") { quoteResult = r; break outer; }
+        quoteResult = r;
+      }
     }
 
     if (quoteResult.error === "SESSION_EXPIRED") {
