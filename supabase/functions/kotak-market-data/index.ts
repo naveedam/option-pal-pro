@@ -297,6 +297,15 @@ async function buildOptionChain(
         const tokenInfo = batch[j];
         const strike = tokenInfo.strike;
 
+        // Validate quote shape — require at least LTP or OI/Volume to count as valid
+        const hasLTP = quote?.last_traded_price !== undefined || quote?.ltp !== undefined;
+        const hasOI  = quote?.open_interest !== undefined || quote?.oi !== undefined;
+        const hasVol = quote?.volume !== undefined;
+        if (!hasLTP && !hasOI && !hasVol) {
+          console.warn(`[OptionChain] Quote missing LTP/OI/Volume for ${tokenInfo.neo_symbol}:`, JSON.stringify(quote).substring(0, 200));
+          continue;
+        }
+
         if (!strikeMap.has(strike)) {
           strikeMap.set(strike, {
             strike, callLTP: 0, putLTP: 0, callOI: 0, putOI: 0,
