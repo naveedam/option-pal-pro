@@ -453,7 +453,14 @@ Deno.serve(async (req) => {
     let niftyChange = 0;
 
     if (quoteResult.error || !quoteResult.data) {
-      console.error(`[MarketData] Quote failed: ${quoteResult.error}`, quoteResult.details);
+      console.error(`[MarketData] MARKET_DATA_UNAVAILABLE`, {
+        endpoint: quoteResult.endpoint,
+        payload: quoteResult.payload,
+        quoteError: quoteResult.error,
+        quoteDetails: quoteResult.details,
+      });
+
+      const message = "Kotak API rejected request — check instrument token or endpoint";
 
       if (validateOnly) {
         return new Response(
@@ -461,7 +468,8 @@ Deno.serve(async (req) => {
             success: false,
             error: "MARKET_DATA_UNAVAILABLE",
             code: "MARKET_VALIDATION_FAILED",
-            details: { quoteError: quoteResult.error, quoteDetails: quoteResult.details },
+            message,
+            details: { quoteError: quoteResult.error, quoteDetails: quoteResult.details, endpoint: quoteResult.endpoint, payload: quoteResult.payload },
             validation: { auth: "connected", marketData: "disconnected", trading: "connected", symbol: symbolKey, quote: 0 },
           }),
           { headers }
@@ -469,7 +477,13 @@ Deno.serve(async (req) => {
       }
 
       return new Response(
-        JSON.stringify({ success: false, error: "MARKET_DATA_UNAVAILABLE", code: "MARKET_DATA_UNAVAILABLE", details: quoteResult.details }),
+        JSON.stringify({
+          success: false,
+          error: "MARKET_DATA_UNAVAILABLE",
+          code: "MARKET_DATA_UNAVAILABLE",
+          message,
+          details: { quoteError: quoteResult.error, quoteDetails: quoteResult.details, endpoint: quoteResult.endpoint, payload: quoteResult.payload },
+        }),
         { status: 200, headers }
       );
     }
