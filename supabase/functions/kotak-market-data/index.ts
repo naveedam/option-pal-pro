@@ -170,102 +170,140 @@ async function fetchScripMasterPaths(baseUrl: string, accessToken: string, sid: 
   return res.json();
 }
 
-// ─── Download and parse scrip master CSV for NIFTY options ──────────
-async function fetchNiftyOptionTokens(
-  baseUrl: string,
-  accessToken: string,
-  sid: string,
-  consumerKey: string,
-  atmStrike: number,
-  strikeRange: number,
-): Promise<Array<{ neo_symbol: string; strike: number; optionType: string }>> {
+// ─── In-memory scrip master cache (refreshed once per day) ──────────
+interface ScripMasterEntry {
+  token: string;
+  strike: number;
+  optionType: "CE" | "PE";
+  expiry: string;
+  symbol: string;
+}
+interface ScripMasterCache {
+  entries: ScripMasterEntry[];
+  expiry: string;          // nearest weekly expiry
+  fetchedAt: number;       // ms epoch
+  dayKey: string;          // YYYY-MM-DD (IST date when fetched)
+}
+let SCRIP_CACHE: ScripMasterCache | null = null;
+
+function todayKeyIST(): string {
+  // IST = UTC+5:30
+  const now = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+  return now.toISOString().split("T")[0];
+}
+
+async function loadScripMaster(
+  baseUrl: string, accessToken: string, sid: string, consumerKey: string,
+): Promise<ScripMasterCache | null> {
+  // Use cached if same day
+  if (SCRIP_CACHE && SCRIP_CACHE.dayKey === todayKeyIST()) {
+    console.log(`[ScripMaster] Using cached entries (${SCRIP_CACHE.entries.length}), expiry=${SCRIP_CACHE.expiry}`);
+    return SCRIP_CACHE;
+  }
+
   try {
     const pathsData = await fetchScripMasterPaths(baseUrl, accessToken, sid, consumerKey);
-    console.log(`[ScripMaster] Response keys: ${JSON.stringify(Object.keys(pathsData))}`);
-
     const fileList = pathsData?.filesPaths || pathsData?.data?.filesPaths || pathsData?.result || [];
     let nfoUrl = "";
-
     if (Array.isArray(fileList)) {
       for (const item of fileList) {
         const path = item?.path || item?.filePath || item?.url || "";
-        if (typeof path === "string" && path.includes("nse_fo")) {
-          nfoUrl = path;
-          break;
-        }
+        if (typeof path === "string" && path.includes("nse_fo")) { nfoUrl = path; break; }
       }
     }
-
     if (!nfoUrl) {
-      console.log("[ScripMaster] nse_fo CSV URL not found in response:", JSON.stringify(pathsData).substring(0, 500));
-      return [];
+      console.log("[ScripMaster] nse_fo CSV URL not found:", JSON.stringify(pathsData).substring(0, 400));
+      return null;
     }
 
-    console.log(`[ScripMaster] Downloading nse_fo CSV from: ${nfoUrl}`);
+    console.log(`[ScripMaster] Downloading CSV: ${nfoUrl}`);
     const csvRes = await fetch(nfoUrl);
-    if (!csvRes.ok) {
-      console.error(`[ScripMaster] CSV download failed: ${csvRes.status}`);
-      return [];
-    }
-
+    if (!csvRes.ok) { console.error(`[ScripMaster] CSV ${csvRes.status}`); return null; }
     const csvText = await csvRes.text();
     const lines = csvText.split("\n");
     console.log(`[ScripMaster] CSV lines: ${lines.length}`);
 
-    const tokens: Array<{ neo_symbol: string; strike: number; optionType: string }> = [];
-    const header = lines[0]?.toLowerCase() || "";
-    const headers = header.split(",");
-
+    const headers = (lines[0] || "").toLowerCase().split(",");
     const tokenIdx = headers.findIndex(h => h.includes("token") || h.includes("instrument_token") || h.includes("psymbol"));
     const symbolIdx = headers.findIndex(h => h.includes("symbol") || h.includes("trading_symbol") || h.includes("ptrdsymbol"));
-    const strikeIdx = headers.findIndex(h => h.includes("strike") || h.includes("strike_price") || h.includes("dstrikeprice"));
-    const optTypeIdx = headers.findIndex(h => h.includes("option") || h.includes("optiontype") || h.includes("poptiontype"));
+    const strikeIdx = headers.findIndex(h => h.includes("strike") || h.includes("dstrikeprice"));
+    const optTypeIdx = headers.findIndex(h => h.includes("option") || h.includes("poptiontype"));
     const expiryIdx = headers.findIndex(h => h.includes("expiry") || h.includes("pexpirydate") || h.includes("dexpiry"));
+    const instNameIdx = headers.findIndex(h => h.includes("instrument") || h.includes("pinstrumentname") || h.includes("instname"));
 
-    console.log(`[ScripMaster] Column indices — token:${tokenIdx} symbol:${symbolIdx} strike:${strikeIdx} optType:${optTypeIdx} expiry:${expiryIdx}`);
-
-    if (tokenIdx < 0) {
-      console.log(`[ScripMaster] Headers: ${headers.slice(0, 15).join(", ")}`);
-      return [];
+    if (tokenIdx < 0 || symbolIdx < 0 || strikeIdx < 0 || optTypeIdx < 0 || expiryIdx < 0) {
+      console.error(`[ScripMaster] Missing columns. Headers: ${headers.slice(0, 20).join(",")}`);
+      return null;
     }
 
-    const minStrike = atmStrike - strikeRange * 50;
-    const maxStrike = atmStrike + strikeRange * 50;
-    let nearestExpiry = "";
+    // Pass 1: collect all NIFTY option expiries to find nearest weekly
+    const allExpiries = new Set<string>();
+    const niftyRows: ScripMasterEntry[] = [];
 
     for (let i = 1; i < lines.length; i++) {
       const cols = lines[i].split(",");
-      if (cols.length < Math.max(tokenIdx, symbolIdx, strikeIdx) + 1) continue;
+      if (cols.length < Math.max(tokenIdx, symbolIdx, strikeIdx, optTypeIdx, expiryIdx) + 1) continue;
 
-      const symbol = cols[symbolIdx]?.trim().toUpperCase() || "";
-      if (!symbol.includes("NIFTY") || symbol.includes("BANKNIFTY") || symbol.includes("FINNIFTY")) continue;
+      const sym = cols[symbolIdx]?.trim().toUpperCase() || "";
+      if (!sym.includes("NIFTY") || sym.includes("BANKNIFTY") || sym.includes("FINNIFTY") || sym.includes("MIDCPNIFTY")) continue;
 
-      const strike = parseFloat(cols[strikeIdx] || "0");
-      const normalizedStrike = strike > 100000 ? strike / 100 : strike;
-      if (normalizedStrike < minStrike || normalizedStrike > maxStrike) continue;
+      // Filter: instrumentName must include OPT (e.g. OPTIDX)
+      if (instNameIdx >= 0) {
+        const iname = cols[instNameIdx]?.trim().toUpperCase() || "";
+        if (!iname.includes("OPT")) continue;
+      }
 
       const optType = cols[optTypeIdx]?.trim().toUpperCase() || "";
       if (optType !== "CE" && optType !== "PE") continue;
 
       const expiry = cols[expiryIdx]?.trim() || "";
-      if (!nearestExpiry && expiry) nearestExpiry = expiry;
+      const token = cols[tokenIdx]?.trim() || "";
+      const strikeRaw = parseFloat(cols[strikeIdx] || "0");
+      const strike = strikeRaw > 100000 ? strikeRaw / 100 : strikeRaw;
 
-      if (expiry === nearestExpiry) {
-        // SDK neo_symbol format: "exchange_segment|instrument_token"
-        tokens.push({
-          neo_symbol: `nse_fo|${cols[tokenIdx].trim()}`,
-          strike: normalizedStrike,
-          optionType: optType,
-        });
-      }
+      if (!token || !expiry || strike <= 0) continue;
+
+      allExpiries.add(expiry);
+      niftyRows.push({ token, strike, optionType: optType as "CE" | "PE", expiry, symbol: sym });
     }
 
-    console.log(`[ScripMaster] Found ${tokens.length} NIFTY option tokens near ATM ${atmStrike} (expiry: ${nearestExpiry})`);
-    return tokens;
+    // Pick nearest future expiry (today or later). Try ISO sort first.
+    const today = new Date().toISOString().split("T")[0];
+    const sorted = Array.from(allExpiries).sort();
+    const nearestExpiry = sorted.find(e => e >= today) || sorted[0] || "";
+
+    const entries = niftyRows.filter(r => r.expiry === nearestExpiry);
+    console.log(`[ScripMaster] Loaded ${entries.length} NIFTY option entries, expiry=${nearestExpiry} (of ${sorted.length} expiries)`);
+
+    SCRIP_CACHE = { entries, expiry: nearestExpiry, fetchedAt: Date.now(), dayKey: todayKeyIST() };
+    return SCRIP_CACHE;
   } catch (err: any) {
-    console.error(`[ScripMaster] Error: ${err.message}`);
-    return [];
+    console.error(`[ScripMaster] Load error: ${err.message}`);
+    return null;
   }
+}
+
+async function fetchNiftyOptionTokens(
+  baseUrl: string, accessToken: string, sid: string, consumerKey: string,
+  atmStrike: number, strikeRange: number,
+): Promise<Array<{ neo_symbol: string; token: string; strike: number; optionType: "CE" | "PE" }>> {
+  const cache = await loadScripMaster(baseUrl, accessToken, sid, consumerKey);
+  if (!cache) return [];
+
+  const minStrike = atmStrike - strikeRange * 50;
+  const maxStrike = atmStrike + strikeRange * 50;
+
+  const tokens = cache.entries
+    .filter(e => e.strike >= minStrike && e.strike <= maxStrike)
+    .map(e => ({
+      neo_symbol: `nse_fo|${e.token}`,
+      token: e.token,
+      strike: e.strike,
+      optionType: e.optionType,
+    }));
+
+  console.log(`[ScripMaster] Resolved ${tokens.length} tokens around ATM ${atmStrike} (range ±${strikeRange}), expiry=${cache.expiry}`);
+  return tokens;
 }
 
 // ─── Build option chain from SDK quotes ─────────────────────────────
