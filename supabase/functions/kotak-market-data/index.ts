@@ -435,8 +435,10 @@ async function buildOptionChain(
     }
   }
 
-  console.log(`[OptionChain] tokens resolved=${optionTokens.length}, quotes ok=${successCount}, failed=${failedCount}` +
-    (failedTokens.length ? `, sample failed=${failedTokens.slice(0, 5).join(",")}` : ""));
+  console.log(
+    `[OptionChain] tokens=${optionTokens.length}, success=${successCount}, failed=${failedCount}` +
+    (failedTokens.length ? `, sample failed=${failedTokens.slice(0, 5).join(",")}` : "")
+  );
 
   const chain = Array.from(strikeMap.values()).sort((a, b) => a.strike - b.strike);
   return { chain, totalCallOI, totalPutOI, success: successCount, failed: failedCount };
