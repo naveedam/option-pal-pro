@@ -203,11 +203,16 @@ async function loadScripMaster(
 
   try {
     const pathsData = await fetchScripMasterPaths(baseUrl, accessToken, sid, consumerKey);
-    const fileList = pathsData?.filesPaths || pathsData?.data?.filesPaths || pathsData?.result || [];
+    const fileList =
+      pathsData?.filesPaths ||
+      pathsData?.data?.filesPaths ||
+      pathsData?.result ||
+      [];
     let nfoUrl = "";
     if (Array.isArray(fileList)) {
       for (const item of fileList) {
-        const path = item?.path || item?.filePath || item?.url || "";
+        // Item may be a plain string URL or an object { path | filePath | url }
+        const path = typeof item === "string" ? item : (item?.path || item?.filePath || item?.url || "");
         if (typeof path === "string" && path.includes("nse_fo")) { nfoUrl = path; break; }
       }
     }
@@ -323,14 +328,24 @@ async function buildOptionChain(
   const failedTokens: string[] = [];
 
   if (optionTokens.length === 0) {
+    console.log("CHAIN INPUT", { tokensGenerated: 0, sampleLookupKeys: [] });
     return { chain: [], totalCallOI: 0, totalPutOI: 0, success: 0, failed: 0 };
   }
 
-  // token → tokenInfo lookup so quotes can be mapped back regardless of order
+  // token → tokenInfo lookup so quotes can be mapped back regardless of order.
+  // Both sides of the lookup use the same normalization (trimmed string).
   const tokenLookup = new Map<string, { strike: number; optionType: "CE" | "PE"; neo_symbol: string }>();
   for (const t of optionTokens) {
-    tokenLookup.set(String(t.token), { strike: t.strike, optionType: t.optionType, neo_symbol: t.neo_symbol });
+    const key = String(t.token).trim();
+    tokenLookup.set(key, { strike: t.strike, optionType: t.optionType, neo_symbol: t.neo_symbol });
   }
+
+  console.log("CHAIN INPUT", {
+    tokensGenerated: optionTokens.length,
+    sampleLookupKeys: Array.from(tokenLookup.keys()).slice(0, 5),
+  });
+
+  let totalQuotesSeen = 0;
 
   // Fetch quotes in batches of 20
   const BATCH_SIZE = 20;
@@ -349,10 +364,11 @@ async function buildOptionChain(
 
       const quotesList = quotesData?.message || quotesData?.data || quotesData?.result || (Array.isArray(quotesData) ? quotesData : [quotesData]);
       const quotesArray = Array.isArray(quotesList) ? quotesList : [quotesList];
+      totalQuotesSeen += quotesArray.length;
 
       for (const quote of quotesArray) {
         // Resolve token from quote payload — Kotak returns it under various keys
-        let tokenFromQuote =
+        let tokenFromQuote: any =
           quote?.tk ||
           quote?.token ||
           quote?.instrument_token ||
@@ -364,39 +380,38 @@ async function buildOptionChain(
           const parts = quote.symbol.split("|");
           if (parts.length === 2) tokenFromQuote = parts[1];
         }
-        // Fallback: exchange_token / display_symbol pipe variant
-        if (!tokenFromQuote && typeof quote?.exchange_token === "string") {
+        // Fallback: exchange_token field (numeric)
+        if (!tokenFromQuote && quote?.exchange_token) {
           tokenFromQuote = quote.exchange_token;
         }
 
         tokenFromQuote = String(tokenFromQuote).trim();
 
-        if (!tokenFromQuote) {
-          console.log("❌ Missing token in quote:", JSON.stringify(quote).substring(0, 200));
+        const ltpRaw = quote?.last_traded_price ?? quote?.ltp;
+        const info = tokenFromQuote ? tokenLookup.get(tokenFromQuote) : undefined;
+
+        // High-signal per-quote debug (limit verbosity to first batch only)
+        if (i === 0) {
+          console.log("QUOTE DEBUG", {
+            symbol: quote?.symbol,
+            extractedToken: tokenFromQuote,
+            inLookup: !!info,
+            rawLtp: ltpRaw,
+          });
+        }
+
+        if (!tokenFromQuote || !info) {
           failedCount++;
+          if (tokenFromQuote) failedTokens.push(tokenFromQuote);
           continue;
         }
 
-        const info = tokenLookup.get(tokenFromQuote);
-        if (!info) {
-          console.log("❌ Token not found in lookup:", tokenFromQuote);
-          failedCount++;
-          failedTokens.push(tokenFromQuote);
-          continue;
-        }
-
-        const ltp = parseFloat(quote?.last_traded_price || quote?.ltp || "0");
+        const ltp = parseFloat(ltpRaw || "0");
         const oi = parseInt(quote?.open_interest || quote?.oi || "0", 10);
         const vol = parseInt(quote?.volume || quote?.v || "0", 10);
 
-        // VALIDATION: skip if no LTP, no OI, no volume
-        if (ltp <= 0 && !oi && !vol) {
-          failedCount++;
-          failedTokens.push(tokenFromQuote);
-          continue;
-        }
-        // Skip strikes where ltp is exactly 0 (per spec)
-        if (ltp <= 0) {
+        // Skip only if no LTP (per spec)
+        if (!ltp || ltp <= 0) {
           failedCount++;
           continue;
         }
@@ -435,10 +450,18 @@ async function buildOptionChain(
     }
   }
 
-  console.log(
-    `[OptionChain] tokens=${optionTokens.length}, success=${successCount}, failed=${failedCount}` +
-    (failedTokens.length ? `, sample failed=${failedTokens.slice(0, 5).join(",")}` : "")
-  );
+  console.log("CHAIN RESULT", {
+    tokens: optionTokens.length,
+    quotes: totalQuotesSeen,
+    success: successCount,
+    failed: failedCount,
+    sampleFailed: failedTokens.slice(0, 5),
+  });
+
+  if (successCount < 5) {
+    console.log("⚠ Too few valid quotes, returning empty chain");
+    return { chain: [], totalCallOI: 0, totalPutOI: 0, success: successCount, failed: failedCount };
+  }
 
   const chain = Array.from(strikeMap.values()).sort((a, b) => a.strike - b.strike);
   return { chain, totalCallOI, totalPutOI, success: successCount, failed: failedCount };
