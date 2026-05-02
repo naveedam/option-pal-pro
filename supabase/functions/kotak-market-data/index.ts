@@ -312,15 +312,24 @@ async function buildOptionChain(
   accessToken: string,
   sid: string,
   consumerKey: string,
-  optionTokens: Array<{ neo_symbol: string; strike: number; optionType: string }>,
+  optionTokens: Array<{ neo_symbol: string; token: string; strike: number; optionType: "CE" | "PE" }>,
   atmStrike: number,
-): Promise<{ chain: any[]; totalCallOI: number; totalPutOI: number }> {
+): Promise<{ chain: any[]; totalCallOI: number; totalPutOI: number; success: number; failed: number }> {
   const strikeMap = new Map<number, any>();
   let totalCallOI = 0;
   let totalPutOI = 0;
+  let successCount = 0;
+  let failedCount = 0;
+  const failedTokens: string[] = [];
 
   if (optionTokens.length === 0) {
-    return { chain: [], totalCallOI: 0, totalPutOI: 0 };
+    return { chain: [], totalCallOI: 0, totalPutOI: 0, success: 0, failed: 0 };
+  }
+
+  // token → tokenInfo lookup so quotes can be mapped back regardless of order
+  const tokenLookup = new Map<string, { strike: number; optionType: "CE" | "PE"; neo_symbol: string }>();
+  for (const t of optionTokens) {
+    tokenLookup.set(String(t.token), { strike: t.strike, optionType: t.optionType, neo_symbol: t.neo_symbol });
   }
 
   // Fetch quotes in batches of 20
@@ -331,60 +340,88 @@ async function buildOptionChain(
 
     try {
       const { data: quotesData, error } = await fetchQuotesSDK(baseUrl, accessToken, sid, consumerKey, neoSymbols, "all");
-      if (error === "SESSION_EXPIRED") return { chain: [], totalCallOI: 0, totalPutOI: 0 };
-      if (error || !quotesData) continue;
+      if (error === "SESSION_EXPIRED") return { chain: [], totalCallOI: 0, totalPutOI: 0, success: 0, failed: optionTokens.length };
+      if (error || !quotesData) {
+        failedCount += batch.length;
+        batch.forEach(b => failedTokens.push(b.token));
+        continue;
+      }
 
-      const quotesList = quotesData?.message || quotesData?.data || quotesData?.result || [];
+      const quotesList = quotesData?.message || quotesData?.data || quotesData?.result || (Array.isArray(quotesData) ? quotesData : [quotesData]);
       const quotesArray = Array.isArray(quotesList) ? quotesList : [quotesList];
 
-      for (let j = 0; j < batch.length && j < quotesArray.length; j++) {
-        const quote = quotesArray[j];
-        const tokenInfo = batch[j];
-        const strike = tokenInfo.strike;
+      for (const quote of quotesArray) {
+        // Resolve token from quote payload — Kotak returns it under various keys
+        const tokenFromQuote = String(
+          quote?.tk || quote?.token || quote?.instrument_token || quote?.instrumentToken || ""
+        ).trim();
 
-        // Validate quote shape — require at least LTP or OI/Volume to count as valid
-        const hasLTP = quote?.last_traded_price !== undefined || quote?.ltp !== undefined;
-        const hasOI  = quote?.open_interest !== undefined || quote?.oi !== undefined;
-        const hasVol = quote?.volume !== undefined;
-        if (!hasLTP && !hasOI && !hasVol) {
-          console.warn(`[OptionChain] Quote missing LTP/OI/Volume for ${tokenInfo.neo_symbol}:`, JSON.stringify(quote).substring(0, 200));
+        let info = tokenLookup.get(tokenFromQuote);
+        // Fallback: parse from neo_symbol-style field if present
+        if (!info && typeof quote?.symbol === "string") {
+          const m = quote.symbol.match(/\|(\d+)/);
+          if (m) info = tokenLookup.get(m[1]);
+        }
+        if (!info) {
+          console.warn(`[OptionChain] Quote with unknown token:`, JSON.stringify(quote).substring(0, 180));
           continue;
         }
 
+        const ltp = parseFloat(quote?.last_traded_price || quote?.ltp || "0");
+        const oi = parseInt(quote?.open_interest || quote?.oi || "0", 10);
+        const vol = parseInt(quote?.volume || quote?.v || "0", 10);
+
+        // VALIDATION: skip if no LTP and no OI/volume
+        if (!ltp && !oi && !vol) {
+          failedCount++;
+          failedTokens.push(tokenFromQuote);
+          continue;
+        }
+        // Skip strikes where ltp is exactly 0 (per spec)
+        if (ltp <= 0) {
+          failedCount++;
+          continue;
+        }
+
+        const strike = info.strike;
         if (!strikeMap.has(strike)) {
           strikeMap.set(strike, {
             strike, callLTP: 0, putLTP: 0, callOI: 0, putOI: 0,
             callOIChange: 0, putOIChange: 0, callVolume: 0, putVolume: 0,
             callBid: 0, callAsk: 0, putBid: 0, putAsk: 0,
+            callToken: "", putToken: "",
             isATM: strike === atmStrike,
           });
         }
-
         const row = strikeMap.get(strike)!;
-        const ltp = parseFloat(quote?.last_traded_price || quote?.ltp || "0");
-        const oi = parseInt(quote?.open_interest || quote?.oi || "0", 10);
         const oiChange = parseInt(quote?.change_in_oi || "0", 10);
-        const vol = parseInt(quote?.volume || "0", 10);
         const bid = parseFloat(quote?.best_bid_price || quote?.bp || "0");
         const ask = parseFloat(quote?.best_ask_price || quote?.sp || "0");
 
-        if (tokenInfo.optionType === "CE") {
+        if (info.optionType === "CE") {
           row.callLTP = ltp; row.callOI = oi; row.callOIChange = oiChange;
           row.callVolume = vol; row.callBid = bid; row.callAsk = ask;
+          row.callToken = tokenFromQuote;
           totalCallOI += oi;
         } else {
           row.putLTP = ltp; row.putOI = oi; row.putOIChange = oiChange;
           row.putVolume = vol; row.putBid = bid; row.putAsk = ask;
+          row.putToken = tokenFromQuote;
           totalPutOI += oi;
         }
+        successCount++;
       }
     } catch (err: any) {
       console.error(`[OptionChain] Batch quote error: ${err.message}`);
+      failedCount += batch.length;
     }
   }
 
+  console.log(`[OptionChain] tokens resolved=${optionTokens.length}, quotes ok=${successCount}, failed=${failedCount}` +
+    (failedTokens.length ? `, sample failed=${failedTokens.slice(0, 5).join(",")}` : ""));
+
   const chain = Array.from(strikeMap.values()).sort((a, b) => a.strike - b.strike);
-  return { chain, totalCallOI, totalPutOI };
+  return { chain, totalCallOI, totalPutOI, success: successCount, failed: failedCount };
 }
 
 // ─── Empty chain helper ─────────────────────────────────────────────
