@@ -203,11 +203,16 @@ async function loadScripMaster(
 
   try {
     const pathsData = await fetchScripMasterPaths(baseUrl, accessToken, sid, consumerKey);
-    const fileList = pathsData?.filesPaths || pathsData?.data?.filesPaths || pathsData?.result || [];
+    const fileList =
+      pathsData?.filesPaths ||
+      pathsData?.data?.filesPaths ||
+      pathsData?.result ||
+      [];
     let nfoUrl = "";
     if (Array.isArray(fileList)) {
       for (const item of fileList) {
-        const path = item?.path || item?.filePath || item?.url || "";
+        // Item may be a plain string URL or an object { path | filePath | url }
+        const path = typeof item === "string" ? item : (item?.path || item?.filePath || item?.url || "");
         if (typeof path === "string" && path.includes("nse_fo")) { nfoUrl = path; break; }
       }
     }
