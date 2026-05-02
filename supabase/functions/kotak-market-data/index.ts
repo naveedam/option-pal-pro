@@ -352,18 +352,36 @@ async function buildOptionChain(
 
       for (const quote of quotesArray) {
         // Resolve token from quote payload — Kotak returns it under various keys
-        const tokenFromQuote = String(
-          quote?.tk || quote?.token || quote?.instrument_token || quote?.instrumentToken || ""
-        ).trim();
+        let tokenFromQuote =
+          quote?.tk ||
+          quote?.token ||
+          quote?.instrument_token ||
+          quote?.instrumentToken ||
+          "";
 
-        let info = tokenLookup.get(tokenFromQuote);
-        // Fallback: parse from neo_symbol-style field if present
-        if (!info && typeof quote?.symbol === "string") {
-          const m = quote.symbol.match(/\|(\d+)/);
-          if (m) info = tokenLookup.get(m[1]);
+        // Fallback: extract from "exchange_segment|TOKEN" symbol field
+        if (!tokenFromQuote && typeof quote?.symbol === "string") {
+          const parts = quote.symbol.split("|");
+          if (parts.length === 2) tokenFromQuote = parts[1];
         }
+        // Fallback: exchange_token / display_symbol pipe variant
+        if (!tokenFromQuote && typeof quote?.exchange_token === "string") {
+          tokenFromQuote = quote.exchange_token;
+        }
+
+        tokenFromQuote = String(tokenFromQuote).trim();
+
+        if (!tokenFromQuote) {
+          console.log("❌ Missing token in quote:", JSON.stringify(quote).substring(0, 200));
+          failedCount++;
+          continue;
+        }
+
+        const info = tokenLookup.get(tokenFromQuote);
         if (!info) {
-          console.warn(`[OptionChain] Quote with unknown token:`, JSON.stringify(quote).substring(0, 180));
+          console.log("❌ Token not found in lookup:", tokenFromQuote);
+          failedCount++;
+          failedTokens.push(tokenFromQuote);
           continue;
         }
 
@@ -371,8 +389,8 @@ async function buildOptionChain(
         const oi = parseInt(quote?.open_interest || quote?.oi || "0", 10);
         const vol = parseInt(quote?.volume || quote?.v || "0", 10);
 
-        // VALIDATION: skip if no LTP and no OI/volume
-        if (!ltp && !oi && !vol) {
+        // VALIDATION: skip if no LTP, no OI, no volume
+        if (ltp <= 0 && !oi && !vol) {
           failedCount++;
           failedTokens.push(tokenFromQuote);
           continue;
@@ -417,8 +435,10 @@ async function buildOptionChain(
     }
   }
 
-  console.log(`[OptionChain] tokens resolved=${optionTokens.length}, quotes ok=${successCount}, failed=${failedCount}` +
-    (failedTokens.length ? `, sample failed=${failedTokens.slice(0, 5).join(",")}` : ""));
+  console.log(
+    `[OptionChain] tokens=${optionTokens.length}, success=${successCount}, failed=${failedCount}` +
+    (failedTokens.length ? `, sample failed=${failedTokens.slice(0, 5).join(",")}` : "")
+  );
 
   const chain = Array.from(strikeMap.values()).sort((a, b) => a.strike - b.strike);
   return { chain, totalCallOI, totalPutOI, success: successCount, failed: failedCount };
