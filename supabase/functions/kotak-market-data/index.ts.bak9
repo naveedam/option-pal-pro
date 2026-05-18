@@ -321,11 +321,11 @@ async function fetchNiftyOptionTokens(
   if (day === 4 && ist.getUTCHours() >= 10) {
     thursday.setUTCDate(thursday.getUTCDate() + 7);
   }
-  // Kotak format: NIFTY{DD}{MM_2digit}{YY}{strike}{type} e.g. NIFTY2605257C23650CE
+  const MONTHS = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
   const dd = String(thursday.getUTCDate()).padStart(2, "0");
-  const mm = String(thursday.getUTCMonth() + 1).padStart(2, "0");
+  const mmm = MONTHS[thursday.getUTCMonth()];
   const yy = String(thursday.getUTCFullYear()).slice(-2);
-  const expiry = `${dd}${mm}${yy}`;
+  const expiry = `${dd}${mmm}${yy}`;
   console.log(`[TokenBuilder] expiry=${expiry} ATM=${atmStrike} range=±${strikeRange}`);
 
   const tokens: Array<{ neo_symbol: string; token: string; strike: number; optionType: "CE" | "PE" }> = [];
@@ -737,7 +737,6 @@ Deno.serve(async (req) => {
   }
 });
 
- 
  
  
  

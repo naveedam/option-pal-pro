@@ -310,33 +310,22 @@ async function fetchNiftyOptionTokens(
   baseUrl: string, accessToken: string, sid: string, consumerKey: string,
   atmStrike: number, strikeRange: number,
 ): Promise<Array<{ neo_symbol: string; token: string; strike: number; optionType: "CE" | "PE" }>> {
-  // Build tokens directly from ATM strike — no scrip master CSV needed
-  const now = new Date();
-  const istOffset = 5.5 * 60 * 60 * 1000;
-  const ist = new Date(now.getTime() + istOffset);
-  const day = ist.getUTCDay();
-  const daysUntilThursday = (4 - day + 7) % 7 || 7;
-  const thursday = new Date(ist);
-  thursday.setUTCDate(ist.getUTCDate() + (day === 4 ? 0 : daysUntilThursday));
-  if (day === 4 && ist.getUTCHours() >= 10) {
-    thursday.setUTCDate(thursday.getUTCDate() + 7);
-  }
-  // Kotak format: NIFTY{DD}{MM_2digit}{YY}{strike}{type} e.g. NIFTY2605257C23650CE
-  const dd = String(thursday.getUTCDate()).padStart(2, "0");
-  const mm = String(thursday.getUTCMonth() + 1).padStart(2, "0");
-  const yy = String(thursday.getUTCFullYear()).slice(-2);
-  const expiry = `${dd}${mm}${yy}`;
-  console.log(`[TokenBuilder] expiry=${expiry} ATM=${atmStrike} range=±${strikeRange}`);
+  const cache = await loadScripMaster(baseUrl, accessToken, sid, consumerKey);
+  if (!cache) return [];
 
-  const tokens: Array<{ neo_symbol: string; token: string; strike: number; optionType: "CE" | "PE" }> = [];
-  for (let i = -strikeRange; i <= strikeRange; i++) {
-    const strike = atmStrike + i * 50;
-    for (const optionType of ["CE", "PE"] as const) {
-      const symbol = `NIFTY${expiry}${strike}${optionType}`;
-      tokens.push({ neo_symbol: `nse_fo|${symbol}`, token: symbol, strike, optionType });
-    }
-  }
-  console.log(`[TokenBuilder] ${tokens.length} tokens, sample: ${tokens[0]?.neo_symbol}`);
+  const minStrike = atmStrike - strikeRange * 50;
+  const maxStrike = atmStrike + strikeRange * 50;
+
+  const tokens = cache.entries
+    .filter(e => e.strike >= minStrike && e.strike <= maxStrike)
+    .map(e => ({
+      neo_symbol: `nse_fo|${e.token}`,
+      token: e.token,
+      strike: e.strike,
+      optionType: e.optionType,
+    }));
+
+  console.log(`[ScripMaster] Resolved ${tokens.length} tokens around ATM ${atmStrike} (range ±${strikeRange}), expiry=${cache.expiry}`);
   return tokens;
 }
 
@@ -737,8 +726,5 @@ Deno.serve(async (req) => {
   }
 });
 
- 
- 
- 
  
  
