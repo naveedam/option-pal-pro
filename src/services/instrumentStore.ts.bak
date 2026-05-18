@@ -36,7 +36,7 @@ interface InstrumentStoreState {
 }
 
 const STORE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
-const NIFTY_LOT_SIZE = 65;
+const NIFTY_LOT_SIZE = 25;
 
 class InstrumentStore {
   private state: InstrumentStoreState = {

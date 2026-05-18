@@ -149,7 +149,7 @@ function generateOiSignals(data: MarketData, dataTimestamp: number, oiSource: Da
       strategy: 'PCR Reversal',
       reason: `PCR ${data.niftyPCR.toFixed(2)} < 0.8, Put OI building +${niftyATM.putOIChange.toLocaleString()}`,
       currentPrice: getLivePrice(chain, niftyATM.strike, 'PE'),
-      suggestedQty: 65, timestamp: now, strength: 'HIGH',
+      suggestedQty: 50, timestamp: now, strength: 'HIGH',
       oiSource: getStrikeOiSource(chain, niftyATM.strike),
       confidence: weightedConfidence([
         { value: Math.min(100, ((0.8 - data.niftyPCR) / 0.3) * 100), weight: 3 },
@@ -167,7 +167,7 @@ function generateOiSignals(data: MarketData, dataTimestamp: number, oiSource: Da
       strategy: 'PCR Reversal',
       reason: `PCR ${data.niftyPCR.toFixed(2)} > 1.2, Call OI building +${niftyATM.callOIChange.toLocaleString()}`,
       currentPrice: getLivePrice(chain, niftyATM.strike, 'CE'),
-      suggestedQty: 65, timestamp: now, strength: 'HIGH',
+      suggestedQty: 50, timestamp: now, strength: 'HIGH',
       oiSource: getStrikeOiSource(chain, niftyATM.strike),
       confidence: weightedConfidence([
         { value: Math.min(100, ((data.niftyPCR - 1.2) / 0.3) * 100), weight: 3 },
@@ -187,7 +187,7 @@ function generateOiSignals(data: MarketData, dataTimestamp: number, oiSource: Da
       strategy: 'Call Wall Breakdown',
       reason: `Spot ${data.niftySpot.toFixed(0)} broke call resistance at ${maxCallOIStrike}`,
       currentPrice: getLivePrice(chain, maxCallOIStrike, 'CE'),
-      suggestedQty: 65, timestamp: now,
+      suggestedQty: 25, timestamp: now,
       strength: breakFactor > 60 ? 'HIGH' : 'MEDIUM',
       oiSource: getStrikeOiSource(chain, maxCallOIStrike),
       confidence: weightedConfidence([
@@ -208,7 +208,7 @@ function generateOiSignals(data: MarketData, dataTimestamp: number, oiSource: Da
       strategy: 'Put Support Breakdown',
       reason: `Spot ${data.niftySpot.toFixed(0)} broke put support at ${maxPutOIStrike}`,
       currentPrice: getLivePrice(chain, maxPutOIStrike, 'PE'),
-      suggestedQty: 65, timestamp: now,
+      suggestedQty: 25, timestamp: now,
       strength: breakFactor > 60 ? 'HIGH' : 'MEDIUM',
       oiSource: getStrikeOiSource(chain, maxPutOIStrike),
       confidence: weightedConfidence([
@@ -229,7 +229,7 @@ function generateOiSignals(data: MarketData, dataTimestamp: number, oiSource: Da
       optionType: isBullish ? 'CE' : 'PE', strategy: 'ATM Volatility Spike',
       reason: `ATM volume surge: CE ${niftyATM.callVolume.toLocaleString()} + PE ${niftyATM.putVolume.toLocaleString()}`,
       currentPrice: getLivePrice(chain, niftyATM.strike, isBullish ? 'CE' : 'PE'),
-      suggestedQty: 65, timestamp: now,
+      suggestedQty: 25, timestamp: now,
       strength: volFactor > 70 ? 'HIGH' : 'MEDIUM',
       oiSource: getStrikeOiSource(chain, niftyATM.strike),
       confidence: weightedConfidence([
@@ -273,7 +273,7 @@ function generatePriceActionSignals(data: MarketData, priceHistory: number[], da
       strategy: 'Breakout Buy',
       reason: `Spot ${spot.toFixed(0)} broke 20-period high ${high20.toFixed(0)}`,
       currentPrice: getLivePrice(chain, atm, 'CE'),
-      suggestedQty: 65, timestamp: now, strength: 'HIGH',
+      suggestedQty: 50, timestamp: now, strength: 'HIGH',
       oiSource: getStrikeOiSource(chain, atm),
       confidence: weightedConfidence([
         { value: Math.min(100, ((spot - high20) / 20) * 100), weight: 3 },
@@ -290,7 +290,7 @@ function generatePriceActionSignals(data: MarketData, priceHistory: number[], da
       strategy: 'Breakdown Sell',
       reason: `Spot ${spot.toFixed(0)} broke 20-period low ${low20.toFixed(0)}`,
       currentPrice: getLivePrice(chain, atm, 'PE'),
-      suggestedQty: 65, timestamp: now, strength: 'HIGH',
+      suggestedQty: 50, timestamp: now, strength: 'HIGH',
       oiSource: getStrikeOiSource(chain, atm),
       confidence: weightedConfidence([
         { value: Math.min(100, ((low20 - spot) / 20) * 100), weight: 3 },
@@ -307,7 +307,7 @@ function generatePriceActionSignals(data: MarketData, priceHistory: number[], da
       strategy: 'Support Bounce',
       reason: `Spot ${spot.toFixed(0)} bouncing off support ${low20.toFixed(0)}`,
       currentPrice: getLivePrice(chain, atm, 'CE'),
-      suggestedQty: 65, timestamp: now, strength: 'MEDIUM',
+      suggestedQty: 25, timestamp: now, strength: 'MEDIUM',
       oiSource: getStrikeOiSource(chain, atm),
       confidence: weightedConfidence([
         { value: Math.min(100, (1 - Math.abs(spot - low20) / proximityThreshold) * 100), weight: 3 },
@@ -324,7 +324,7 @@ function generatePriceActionSignals(data: MarketData, priceHistory: number[], da
       strategy: 'Resistance Rejection',
       reason: `Spot ${spot.toFixed(0)} rejected at resistance ${high20.toFixed(0)}`,
       currentPrice: getLivePrice(chain, atm, 'PE'),
-      suggestedQty: 65, timestamp: now, strength: 'MEDIUM',
+      suggestedQty: 25, timestamp: now, strength: 'MEDIUM',
       oiSource: getStrikeOiSource(chain, atm),
       confidence: weightedConfidence([
         { value: Math.min(100, (1 - Math.abs(spot - high20) / proximityThreshold) * 100), weight: 3 },
@@ -346,7 +346,7 @@ function generatePriceActionSignals(data: MarketData, priceHistory: number[], da
         strategy: 'Momentum Up',
         reason: `3 consecutive rising ticks, +${pctMove.toFixed(2)}% move`,
         currentPrice: getLivePrice(chain, atm, 'CE'),
-        suggestedQty: 65, timestamp: now, strength: 'MEDIUM',
+        suggestedQty: 25, timestamp: now, strength: 'MEDIUM',
         oiSource: getStrikeOiSource(chain, atm),
         confidence: weightedConfidence([
           { value: Math.min(100, pctMove * 200), weight: 3 },
@@ -361,7 +361,7 @@ function generatePriceActionSignals(data: MarketData, priceHistory: number[], da
         strategy: 'Momentum Down',
         reason: `3 consecutive falling ticks, -${pctMove.toFixed(2)}% move`,
         currentPrice: getLivePrice(chain, atm, 'PE'),
-        suggestedQty: 65, timestamp: now, strength: 'MEDIUM',
+        suggestedQty: 25, timestamp: now, strength: 'MEDIUM',
         oiSource: getStrikeOiSource(chain, atm),
         confidence: weightedConfidence([
           { value: Math.min(100, pctMove * 200), weight: 3 },
@@ -410,7 +410,7 @@ function generateMultiTimeframeSignals(data: MarketData, priceHistory: number[],
       strategy: 'MTF Strong Buy',
       reason: `Breakout above ${high20.toFixed(0)} confirmed by all timeframes (short↑ med↑ long↑)`,
       currentPrice: getLivePrice(chain, data.niftyATM, 'CE'),
-      suggestedQty: 65, timestamp: now, strength: 'HIGH',
+      suggestedQty: 50, timestamp: now, strength: 'HIGH',
       oiSource: getStrikeOiSource(chain, data.niftyATM),
       confidence: weightedConfidence([
         { value: Math.min(100, ((spot - high20) / 20) * 100), weight: 2 },
@@ -427,7 +427,7 @@ function generateMultiTimeframeSignals(data: MarketData, priceHistory: number[],
       strategy: 'MTF Strong Sell',
       reason: `Breakdown below ${low20.toFixed(0)} confirmed by all timeframes (short↓ med↓ long↓)`,
       currentPrice: getLivePrice(chain, data.niftyATM, 'PE'),
-      suggestedQty: 65, timestamp: now, strength: 'HIGH',
+      suggestedQty: 50, timestamp: now, strength: 'HIGH',
       oiSource: getStrikeOiSource(chain, data.niftyATM),
       confidence: weightedConfidence([
         { value: Math.min(100, ((low20 - spot) / 20) * 100), weight: 2 },
@@ -444,7 +444,7 @@ function generateMultiTimeframeSignals(data: MarketData, priceHistory: number[],
       strategy: 'Trend Continuation',
       reason: `Uptrend: spot above ${medAvg.toFixed(0)} avg, PCR ${data.niftyPCR.toFixed(2)} bullish, short-term rising`,
       currentPrice: getLivePrice(chain, data.niftyATM, 'CE'),
-      suggestedQty: 65, timestamp: now, strength: 'MEDIUM',
+      suggestedQty: 25, timestamp: now, strength: 'MEDIUM',
       oiSource: getStrikeOiSource(chain, data.niftyATM),
       confidence: weightedConfidence([
         { value: Math.min(100, ((spot - medAvg) / 30) * 100), weight: 2 },
@@ -544,7 +544,7 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
       const newSignals = generateSignals(data, priceHistoryRef.current, dataTimestamp, oiSource);
 
       const sizedSignals = newSignals.map(sig => {
-        const lotSize = sig.index === 'NIFTY' ? 65 : 15;
+        const lotSize = sig.index === 'NIFTY' ? 25 : 10;
         const stopLossPoints = sig.currentPrice * riskSettings.stopLossPct;
         const qty = calculateQty({
           capital: riskSettings.capital,
