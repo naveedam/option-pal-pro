@@ -231,15 +231,12 @@ async function loadScripMaster(
     const headers = (lines[0] || "").toLowerCase().split(",");
     console.log("[ScripMaster] CSV headers:", headers.slice(0, 20).join(" | "));
     console.log("[ScripMaster] CSV sample row:", lines[1]?.substring(0, 300));
-    // Kotak scrip master CSV columns (as of 2026):
-    // psymbol=token, pgroup, pexchseg, pinsttype, psymbolname, ptrdsymbol, poptiontype, pscripret(expiry), dstrikeprice
-    const tokenIdx = headers.findIndex(h => h === "psymbol" || h.includes("token") || h.includes("instrument_token"));
-    const symbolIdx = headers.findIndex(h => h === "ptrdsymbol" || h === "psymbolname" || h.includes("trading_symbol"));
-    const strikeIdx = headers.findIndex(h => h === "dstrikeprice" || h.includes("strike"));
-    const optTypeIdx = headers.findIndex(h => h === "poptiontype" || h.includes("option"));
-    const expiryIdx = headers.findIndex(h => h === "pscripret" || h === "pexpirydate" || h.includes("expiry"));
-    const instNameIdx = headers.findIndex(h => h === "pinsttype" || h.includes("instrument") || h.includes("instname"));
-    console.log(`[ScripMaster] Column indices: token=${tokenIdx} symbol=${symbolIdx} strike=${strikeIdx} optType=${optTypeIdx} expiry=${expiryIdx} instName=${instNameIdx}`);
+    const tokenIdx = headers.findIndex(h => h.includes("token") || h.includes("instrument_token") || h.includes("psymbol"));
+    const symbolIdx = headers.findIndex(h => h.includes("symbol") || h.includes("trading_symbol") || h.includes("ptrdsymbol"));
+    const strikeIdx = headers.findIndex(h => h.includes("strike") || h.includes("dstrikeprice"));
+    const optTypeIdx = headers.findIndex(h => h.includes("option") || h.includes("poptiontype"));
+    const expiryIdx = headers.findIndex(h => h.includes("expiry") || h.includes("pexpirydate") || h.includes("dexpiry"));
+    const instNameIdx = headers.findIndex(h => h.includes("instrument") || h.includes("pinstrumentname") || h.includes("instname"));
 
     if (tokenIdx < 0 || symbolIdx < 0 || strikeIdx < 0 || optTypeIdx < 0 || expiryIdx < 0) {
       console.error(`[ScripMaster] Missing columns. Headers: ${headers.slice(0, 20).join(",")}`);
@@ -726,4 +723,3 @@ Deno.serve(async (req) => {
   }
 });
 
- 
