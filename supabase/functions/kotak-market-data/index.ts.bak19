@@ -505,7 +505,7 @@ async function buildOptionChain(
 
         tokenFromQuote = String(tokenFromQuote).trim();
 
-        const ltpRaw = quote?.ltp ?? quote?.last_traded_price ?? quote?.lstup_t ?? quote?.ltp_details?.ltp;
+        const ltpRaw = quote?.last_traded_price ?? quote?.ltp;
         const info = tokenFromQuote ? tokenLookup.get(tokenFromQuote) : undefined;
 
         // High-signal per-quote debug (limit verbosity to first batch only)
@@ -826,7 +826,6 @@ Deno.serve(async (req) => {
   }
 });
 
- 
  
  
  
