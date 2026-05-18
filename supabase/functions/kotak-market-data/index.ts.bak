@@ -229,8 +229,6 @@ async function loadScripMaster(
     console.log(`[ScripMaster] CSV lines: ${lines.length}`);
 
     const headers = (lines[0] || "").toLowerCase().split(",");
-    console.log("[ScripMaster] CSV headers:", headers.slice(0, 20).join(" | "));
-    console.log("[ScripMaster] CSV sample row:", lines[1]?.substring(0, 300));
     const tokenIdx = headers.findIndex(h => h.includes("token") || h.includes("instrument_token") || h.includes("psymbol"));
     const symbolIdx = headers.findIndex(h => h.includes("symbol") || h.includes("trading_symbol") || h.includes("ptrdsymbol"));
     const strikeIdx = headers.findIndex(h => h.includes("strike") || h.includes("dstrikeprice"));
@@ -439,7 +437,6 @@ async function buildOptionChain(
             callBid: 0, callAsk: 0, putBid: 0, putAsk: 0,
             callToken: "", putToken: "",
             isATM: strike === atmStrike,
-            oiSource: "kotak",
           });
         }
         const row = strikeMap.get(strike)!;

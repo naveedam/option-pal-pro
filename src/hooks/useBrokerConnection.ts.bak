@@ -37,8 +37,10 @@ export function useBrokerConnection() {
 
         if (error) throw new Error(error.message || 'Market validation failed');
 
-        if (true) { // bypass: trust Kotak auth — nse-market-data unreliable
-          console.log('[BrokerConnection] Market validation bypassed — trusting Kotak auth');
+        if (data?.success && data?.data?.niftySpot > 0) {
+          console.log(
+            `[BrokerConnection] Market validation success: NIFTY=${data.data.niftySpot}`,
+          );
 
           setState((prev) => ({
             ...prev,

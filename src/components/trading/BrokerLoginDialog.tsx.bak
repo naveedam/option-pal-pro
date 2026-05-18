@@ -92,7 +92,7 @@ export function BrokerLoginDialog({ open, onOpenChange, onConnected }: BrokerLog
       setSuccessDescription(
         marketReady
           ? 'Authentication and market feed are both connected.'
-          : 'Market data will connect automatically — you can close this dialog',
+          : brokerState.marketDataError || 'Authentication succeeded, but the market feed is unavailable.',
       );
       setSuccess(true);
 
