@@ -486,11 +486,21 @@ async function buildOptionChain(
 
       for (const quote of quotesArray) {
         // Resolve token from quote payload — Kotak returns it under various keys
-        // Kotak returns token in exchange_token field (e.g. "51315")
-        let tokenFromQuote: any = quote?.exchange_token || quote?.tk || quote?.token || quote?.instrument_token || quote?.instrumentToken || "";
+        let tokenFromQuote: any =
+          quote?.tk ||
+          quote?.token ||
+          quote?.instrument_token ||
+          quote?.instrumentToken ||
+          "";
+
+        // Fallback: extract from "exchange_segment|TOKEN" symbol field
         if (!tokenFromQuote && typeof quote?.symbol === "string") {
           const parts = quote.symbol.split("|");
           if (parts.length === 2) tokenFromQuote = parts[1];
+        }
+        // Fallback: exchange_token field (numeric)
+        if (!tokenFromQuote && quote?.exchange_token) {
+          tokenFromQuote = quote.exchange_token;
         }
 
         tokenFromQuote = String(tokenFromQuote).trim();
@@ -816,8 +826,6 @@ Deno.serve(async (req) => {
   }
 });
 
- 
- 
  
  
  
