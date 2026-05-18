@@ -246,15 +246,6 @@ async function loadScripMaster(
       return null;
     }
 
-    // Print first NIFTY row for debugging
-    for (let i = 1; i < Math.min(lines.length, 200); i++) {
-      const cols = lines[i].split(",");
-      const sym = cols[symbolIdx]?.trim().toUpperCase() || "";
-      if (sym.includes("NIFTY") && !sym.includes("BANK") && !sym.includes("FIN") && !sym.includes("MID")) {
-        console.log("[ScripMaster] First NIFTY row:", lines[i].substring(0, 200));
-        break;
-      }
-    }
     // Pass 1: collect all NIFTY option expiries to find nearest weekly
     const allExpiries = new Set<string>();
     const niftyRows: ScripMasterEntry[] = [];
@@ -746,7 +737,6 @@ Deno.serve(async (req) => {
   }
 });
 
- 
  
  
  
