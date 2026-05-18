@@ -291,11 +291,6 @@ async function loadScripMaster(
     function normaliseExpiry(raw: string): string {
       const s = raw.trim().toUpperCase();
       if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-      // Unix timestamp in ms or seconds
-      if (/^\d{9,13}$/.test(s)) {
-        const ms = s.length <= 10 ? parseInt(s) * 1000 : parseInt(s);
-        return new Date(ms).toISOString().split("T")[0];
-      }
       const m1 = s.match(/^(\d{2})-([A-Z]{3})-(\d{4})$/);
       if (m1) return `${m1[3]}-${MONTH_MAP[m1[2]]||"00"}-${m1[1]}`;
       const m2 = s.match(/^(\d{2})([A-Z]{3})(\d{4})$/);
@@ -327,106 +322,33 @@ async function fetchNiftyOptionTokens(
   baseUrl: string, accessToken: string, sid: string, consumerKey: string,
   atmStrike: number, strikeRange: number,
 ): Promise<Array<{ neo_symbol: string; token: string; strike: number; optionType: "CE" | "PE" }>> {
-  // Use in-memory cache if available (warm Lambda reuse)
-  if (TOKEN_CACHE && (Date.now() - TOKEN_CACHE.fetchedAt) < 6 * 60 * 60 * 1000) {
-    const minStrike = atmStrike - strikeRange * 50;
-    const maxStrike = atmStrike + strikeRange * 50;
-    const filtered = TOKEN_CACHE.tokens.filter(t => t.strike >= minStrike && t.strike <= maxStrike);
-    console.log(`[TokenCache] Hit: ${filtered.length} tokens, expiry=${TOKEN_CACHE.expiry}`);
-    return filtered;
+  const now = new Date();
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const ist = new Date(now.getTime() + istOffset);
+  const day = ist.getUTCDay();
+  const daysUntilThursday = (4 - day + 7) % 7 || 7;
+  const thursday = new Date(ist);
+  thursday.setUTCDate(ist.getUTCDate() + (day === 4 ? 0 : daysUntilThursday));
+  if (day === 4 && ist.getUTCHours() >= 10) {
+    thursday.setUTCDate(thursday.getUTCDate() + 7);
   }
+  // Kotak format: NIFTY{DD}{MM_2digit}{YY}{strike}{type} e.g. NIFTY2605257C23650CE
+  const dd = String(thursday.getUTCDate()).padStart(2, "0");
+  const mm = String(thursday.getUTCMonth() + 1).padStart(2, "0");
+  const yy = String(thursday.getUTCFullYear()).slice(-2);
+  const expiry = `${dd}${mm}${yy}`;
+  console.log(`[TokenBuilder] expiry=${expiry} ATM=${atmStrike} range=±${strikeRange}`);
 
-  // Fetch public Kotak scrip master CSV directly (no auth needed)
-  const today = new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().split("T")[0];
-  const publicUrl = `https://lapi.kotaksecurities.com/wso2-scripmaster/v1/prod/${today}/transformed/nse_fo.csv`;
-  console.log(`[TokenCache] Fetching public CSV: ${publicUrl}`);
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    const res = await fetch(publicUrl, { signal: controller.signal });
-    clearTimeout(timeout);
-
-    if (!res.ok) {
-      console.error(`[TokenCache] CSV fetch failed: ${res.status}`);
-      return [];
+  const tokens: Array<{ neo_symbol: string; token: string; strike: number; optionType: "CE" | "PE" }> = [];
+  for (let i = -strikeRange; i <= strikeRange; i++) {
+    const strike = atmStrike + i * 50;
+    for (const optionType of ["CE", "PE"] as const) {
+      const symbol = `NIFTY${expiry}${strike}${optionType}`;
+      tokens.push({ neo_symbol: `nse_fo|${symbol}`, token: symbol, strike, optionType });
     }
-
-    const text = await res.text();
-    const lines = text.split("\n");
-    console.log(`[TokenCache] CSV loaded: ${lines.length} lines`);
-    console.log("[TokenCache] CSV header raw:", text.substring(0, 300));
-
-    const headers = (lines[0] || "").toLowerCase().split(",");
-    const tokenIdx = headers.findIndex(h => h === "psymbol");
-    const symIdx = headers.findIndex(h => h === "ptrdsymbol");
-    const strikeIdx = headers.findIndex(h => h === "dstrikeprice" || h.includes("strike") || h === "strikeprice");
-    console.log("[TokenCache] All headers:", headers.slice(0, 30).join(" | "));
-    const optTypeIdx = headers.findIndex(h => h === "poptiontype");
-    const expiryIdx = headers.findIndex(h => h === "pexpirydate" || h === "pscripret");
-    const instIdx = headers.findIndex(h => h === "pinsttype");
-
-    console.log(`[TokenCache] Columns: token=${tokenIdx} sym=${symIdx} strike=${strikeIdx} opt=${optTypeIdx} expiry=${expiryIdx} inst=${instIdx}`);
-    console.log("[TokenCache] All headers:", headers.slice(0, 35).join(" | "));
-
-    const MONTH_MAP: Record<string, string> = { JAN:"01",FEB:"02",MAR:"03",APR:"04",MAY:"05",JUN:"06",JUL:"07",AUG:"08",SEP:"09",OCT:"10",NOV:"11",DEC:"12" };
-    function normaliseExpiry(raw: string): string {
-      const s = raw.trim().toUpperCase();
-      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-      const m1 = s.match(/^(\d{2})-([A-Z]{3})-(\d{4})$/);
-      if (m1) return `${m1[3]}-${MONTH_MAP[m1[2]]||"00"}-${m1[1]}`;
-      const m2 = s.match(/^(\d{2})([A-Z]{3})(\d{4})$/);
-      if (m2) return `${m2[3]}-${MONTH_MAP[m2[2]]||"00"}-${m2[1]}`;
-      return s;
-    }
-
-    // Find nearest weekly expiry
-    const todayISO = today;
-    const allExpiries = new Set<string>();
-    const allRows: Array<{ token: string; strike: number; optionType: "CE"|"PE"; expiry: string; expiryISO: string }> = [];
-
-    for (let i = 1; i < lines.length; i++) {
-      const cols = lines[i].split(",");
-      if (cols.length < 5) continue;
-      const inst = cols[instIdx]?.trim().toUpperCase() || "";
-      if (inst !== "OPTIDX") continue;
-      const sym = cols[symIdx]?.trim().toUpperCase() || "";
-      if (!sym.startsWith("NIFTY") || sym.includes("BANK") || sym.includes("FIN") || sym.includes("MID")) continue;
-      const optType = cols[optTypeIdx]?.trim().toUpperCase() as "CE"|"PE";
-      if (optType !== "CE" && optType !== "PE") continue;
-      const token = cols[tokenIdx]?.trim() || "";
-      const strikeRaw = parseFloat(cols[strikeIdx] || "0");
-      const strike = strikeRaw > 100000 ? strikeRaw / 100 : strikeRaw;
-      const expiry = cols[expiryIdx]?.trim() || "";
-      if (!token || !expiry || strike <= 0) continue;
-      const expiryISO = normaliseExpiry(expiry);
-      allExpiries.add(expiryISO);
-      allRows.push({ token, strike, optionType: optType, expiry, expiryISO });
-    }
-
-    const sorted = Array.from(allExpiries).sort();
-    const nearestExpiry = sorted.find(e => e >= todayISO) || sorted[0] || "";
-    const rows = allRows.filter(r => r.expiryISO === nearestExpiry);
-    console.log(`[TokenCache] ${rows.length} NIFTY tokens, expiry=${nearestExpiry}`);
-    if (rows.length > 0) console.log(`[TokenCache] Sample token: ${rows[0].token} strike=${rows[0].strike} type=${rows[0].optionType}`);
-
-    const allTokens = rows.map(r => ({
-      neo_symbol: `nse_fo|${r.token}`,
-      token: r.token,
-      strike: r.strike,
-      optionType: r.optionType,
-    }));
-
-    TOKEN_CACHE = { tokens: allTokens, expiry: nearestExpiry, fetchedAt: Date.now() };
-
-    const minStrike = atmStrike - strikeRange * 50;
-    const maxStrike = atmStrike + strikeRange * 50;
-    return allTokens.filter(t => t.strike >= minStrike && t.strike <= maxStrike);
-
-  } catch (e: any) {
-    console.error(`[TokenCache] Error: ${e.message}`);
-    return [];
   }
+  console.log(`[TokenBuilder] ${tokens.length} tokens, sample: ${tokens[0]?.neo_symbol}`);
+  return tokens;
 }
 
 // ─── Build option chain from SDK quotes ─────────────────────────────
@@ -826,12 +748,6 @@ Deno.serve(async (req) => {
   }
 });
 
- 
- 
- 
- 
- 
- 
  
  
  
