@@ -25,7 +25,7 @@ export function OptionChainTable({ chain, index, highlightedStrike }: OptionChai
   const smartMoney = useSmartMoney(chain);
 
   return (
-    <div className="panel flex-1 flex flex-col min-h-0">
+    <div className="panel flex flex-col" style={{height: "100%", minHeight: 0, maxHeight: "100%"}}>
       <div className="panel-header">
         <span>{index} Option Chain</span>
         <div className="flex items-center gap-3 text-[10px] font-mono">
