@@ -284,9 +284,14 @@ const Dashboard = () => {
               </Button>
             )}
             {isBrokerAuthenticated(broker) && (
-              <Button variant="ghost" size="sm" onClick={async () => { await broker.disconnect(); setIsPaperTrading(true); toast.info('Broker disconnected'); }} className="text-xs text-muted-foreground">
-                DISCONNECT
-              </Button>
+              <div className="flex items-center gap-1">
+                <Button variant="ghost" size="sm" onClick={openBrokerDialog} className="text-xs text-muted-foreground gap-1">
+                  ⇄ SWITCH
+                </Button>
+                <Button variant="ghost" size="sm" onClick={async () => { await broker.disconnect(); setIsPaperTrading(true); toast.info('Broker disconnected'); }} className="text-xs text-muted-foreground">
+                  DISCONNECT
+                </Button>
+              </div>
             )}
           </div>
 
