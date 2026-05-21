@@ -392,10 +392,10 @@ const Dashboard = () => {
                     <EyeOff className="w-3 h-3" /> Hide Chain
                   </Button>
                 </div>
-                <TabsContent value="NIFTY" className="flex-1 min-h-0 mt-0">
+                <TabsContent value="NIFTY" className="mt-0 h-full">
                   <OptionChainTable chain={marketData.niftyChain} index="NIFTY" highlightedStrike={highlightedStrike} />
                 </TabsContent>
-                <TabsContent value="SENSEX" className="flex-1 min-h-0 mt-0">
+                <TabsContent value="SENSEX" className="mt-0 h-full">
                   <OptionChainTable chain={marketData.sensexChain} index="SENSEX" highlightedStrike={highlightedStrike} />
                 </TabsContent>
               </Tabs>
