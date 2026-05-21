@@ -205,11 +205,6 @@ export function SignalPanel({ signals, onConfirm, onDismiss, riskLimitReached, o
           ⚠ Risk limit reached — signals paused
         </div>
       )}
-      {staleCount > 0 && (
-        <div className="bg-warning/10 border border-warning/30 rounded-md p-2 text-xs text-warning">
-          ⚠ {staleCount} signal{staleCount > 1 ? 's' : ''} have stale prices — execution disabled
-        </div>
-      )}
       {/* Data source info bar */}
       {dataSourceInfo && (
         <div className={`rounded px-2 py-1 text-[9px] font-mono flex items-center justify-between ${
