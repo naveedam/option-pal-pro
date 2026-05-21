@@ -483,6 +483,7 @@ const Dashboard = () => {
         open={brokerDialogOpen}
         onOpenChange={setBrokerDialogOpen}
         onConnected={handleBrokerConnected}
+        onConnect={broker.connect}
       />
     </>
   );

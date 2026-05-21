@@ -36,9 +36,10 @@ interface BrokerLoginDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConnected: () => Promise<BrokerSessionState>;
+  onConnect?: (brokerType: any, params: any) => Promise<{ success: boolean; error?: string; brokerState?: BrokerSessionState }>;
 }
 
-export function BrokerLoginDialog({ open, onOpenChange, onConnected }: BrokerLoginDialogProps) {
+export function BrokerLoginDialog({ open, onOpenChange, onConnected, onConnect }: BrokerLoginDialogProps) {
   const [step, setStep] = useState<'select' | 'form'>('select');
   const [selectedBroker, setSelectedBroker] = useState<BrokerChoice | null>(null);
   const [loading, setLoading] = useState(false);
@@ -83,22 +84,22 @@ export function BrokerLoginDialog({ open, onOpenChange, onConnected }: BrokerLog
     setLoading(true);
     setError('');
     try {
-      const { data, error: fnError } = await supabase.functions.invoke('kotak-neo-auth', {
-        body: { action: 'login', ...loginPayload },
-      });
-      if (fnError) throw new Error(fnError.message);
-      if (!data?.success) {
-        setError(data?.error || 'Login failed');
-        return;
-      }
-      const brokerState = await onConnected();
-      const marketReady = brokerState.marketData === 'connected';
-      setSuccess(true);
-      if (marketReady) {
-        toast.success('Kotak Neo connected successfully');
+      let marketReady = false;
+      if (onConnect) {
+        const result = await onConnect('kotak', loginPayload);
+        if (!result.success) { setError(result.error || 'Login failed'); return; }
+        marketReady = result.brokerState?.marketData === 'connected';
       } else {
-        toast.warning('Broker login succeeded — market feed connecting');
+        const { data, error: fnError } = await supabase.functions.invoke('kotak-neo-auth', {
+          body: { action: 'login', ...loginPayload },
+        });
+        if (fnError) throw new Error(fnError.message);
+        if (!data?.success) { setError(data?.error || 'Login failed'); return; }
+        const brokerState = await onConnected();
+        marketReady = brokerState.marketData === 'connected';
       }
+      setSuccess(true);
+      toast.success(marketReady ? 'Kotak Neo connected successfully' : 'Broker login succeeded — market feed connecting');
       setTimeout(() => onOpenChange(false), 1500);
     } catch (err: any) {
       setError(err.message || 'Connection failed');
