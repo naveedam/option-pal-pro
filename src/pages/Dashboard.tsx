@@ -373,7 +373,7 @@ const Dashboard = () => {
         </div>
 
         {/* Main content area */}
-        <div className="flex-1 flex min-h-0 px-4 pb-3 gap-3">
+        <div className="flex-1 flex min-h-0 px-4 gap-3" style={{minHeight: 0}}>
           {/* Option Chain with toggle */}
           {showOptionChain && (
             <div className="flex-1 flex flex-col min-h-0">
@@ -392,10 +392,10 @@ const Dashboard = () => {
                     <EyeOff className="w-3 h-3" /> Hide Chain
                   </Button>
                 </div>
-                <TabsContent value="NIFTY" className="mt-0 h-full">
+                <TabsContent value="NIFTY" className="mt-0 overflow-hidden" style={{height: "calc(100% - 40px)"}}>  
                   <OptionChainTable chain={marketData.niftyChain} index="NIFTY" highlightedStrike={highlightedStrike} />
                 </TabsContent>
-                <TabsContent value="SENSEX" className="mt-0 h-full">
+                <TabsContent value="SENSEX" className="mt-0 overflow-hidden" style={{height: "calc(100% - 40px)"}}>
                   <OptionChainTable chain={marketData.sensexChain} index="SENSEX" highlightedStrike={highlightedStrike} />
                 </TabsContent>
               </Tabs>
