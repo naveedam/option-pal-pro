@@ -57,6 +57,24 @@ function computeOIChanges(chain: OptionData[]): { majorCallWriting: number; majo
   return { majorCallWriting: maxCallStrike, majorPutWriting: maxPutStrike, topChanges };
 }
 
+function calculateMaxPain(chain: OptionData[]): number {
+  if (chain.length === 0) return 0;
+  const strikes = chain.map(r => r.strike);
+  let minPain = Infinity;
+  let maxPainStrike = 0;
+  for (const expiry of strikes) {
+    let totalPain = 0;
+    for (const row of chain) {
+      // Call pain: call writers lose when spot > strike
+      if (expiry > row.strike) totalPain += (expiry - row.strike) * row.callOI;
+      // Put pain: put writers lose when spot < strike
+      if (expiry < row.strike) totalPain += (row.strike - expiry) * row.putOI;
+    }
+    if (totalPain < minPain) { minPain = totalPain; maxPainStrike = expiry; }
+  }
+  return maxPainStrike;
+}
+
 export function AnalyticsPanels({ chain, spotPrice, index, maxPain = 0 }: AnalyticsPanelsProps) {
   const gamma = useMemo(() => computeGammaWall(chain, spotPrice), [chain, spotPrice]);
   const dealer = useMemo(() => computeDealerPositioning(chain), [chain]);
@@ -71,8 +89,10 @@ export function AnalyticsPanels({ chain, spotPrice, index, maxPain = 0 }: Analyt
     [dealer]
   );
 
-  const maxPainDistance = spotPrice > 0 && maxPain > 0 ? maxPain - spotPrice : 0;
-  const maxPainPct = spotPrice > 0 && maxPain > 0 ? ((maxPainDistance) / spotPrice * 100) : 0;
+  const computedMaxPain = useMemo(() => calculateMaxPain(chain), [chain]);
+  const effectiveMaxPain = maxPain > 0 ? maxPain : computedMaxPain;
+  const maxPainDistance = spotPrice > 0 && effectiveMaxPain > 0 ? effectiveMaxPain - spotPrice : 0;
+  const maxPainPct = spotPrice > 0 && effectiveMaxPain > 0 ? ((maxPainDistance) / spotPrice * 100) : 0;
   const maxPainBias = maxPainDistance > 0 ? 'Bullish Pull' : maxPainDistance < 0 ? 'Bearish Pull' : 'Neutral';
   const maxPainBiasColor = maxPainDistance > 0 ? 'text-profit' : maxPainDistance < 0 ? 'text-loss' : 'text-muted-foreground';
 
@@ -194,7 +214,7 @@ export function AnalyticsPanels({ chain, spotPrice, index, maxPain = 0 }: Analyt
         <CardContent className="px-3 pb-2 space-y-1">
           <div className="flex justify-between text-xs font-mono">
             <span className="text-muted-foreground">Strike</span>
-            <span className="text-foreground font-bold">{maxPain || '—'}</span>
+            <span className="text-foreground font-bold">{effectiveMaxPain || '—'}</span>
           </div>
           <div className="flex justify-between text-xs font-mono">
             <span className="text-muted-foreground">Distance</span>

@@ -57,7 +57,7 @@ function StaleBanner() {
   return (
     <div className="flex items-center gap-1.5 bg-warning/10 border border-warning/30 rounded px-2 py-1 text-[10px] text-warning">
       <AlertTriangle className="w-3 h-3 flex-shrink-0" />
-      ⚠ Price mismatch detected. Signal may be outdated.
+      ⚠ Signal price updating — refreshes every 5s.
     </div>
   );
 }
@@ -80,7 +80,7 @@ function SignalCard({ signal, onConfirm, onDismiss, riskLimitReached, onExecuteT
 }) {
   const stopLoss = signal.currentPrice * 0.98;
   const target = signal.currentPrice * 1.04;
-  const isDisabled = riskLimitReached || signal.isStale;
+  const isDisabled = riskLimitReached;
 
   return (
     <div className={`signal-card animate-slide-in ${signal.isStale ? 'opacity-70 border-warning/40' : ''}`}>
@@ -168,7 +168,7 @@ function SignalCard({ signal, onConfirm, onDismiss, riskLimitReached, onExecuteT
           onClick={() => onExecuteTrade ? onExecuteTrade(signal) : onConfirm(signal)}
           disabled={isDisabled}
         >
-          {signal.isStale ? '⚠ STALE' : '⚡ Execute Trade'}
+          {'⚡ Execute Trade'}
         </Button>
         {onViewInChain && (
           <Button
