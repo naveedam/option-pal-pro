@@ -373,7 +373,7 @@ const Dashboard = () => {
         </div>
 
         {/* Main content area */}
-        <div className="flex-1 flex min-h-0 px-4 gap-3" style={{minHeight: 0}}>
+        <div className="flex-1 flex min-h-0 px-4 pb-3 gap-3">
           {/* Option Chain with toggle */}
           {showOptionChain && (
             <div className="flex-1 flex flex-col min-h-0">
@@ -392,10 +392,10 @@ const Dashboard = () => {
                     <EyeOff className="w-3 h-3" /> Hide Chain
                   </Button>
                 </div>
-                <TabsContent value="NIFTY" className="mt-0 overflow-hidden" style={{height: "calc(100% - 40px)"}}>  
+                <TabsContent value="NIFTY" className="flex-1 min-h-0 mt-0">
                   <OptionChainTable chain={marketData.niftyChain} index="NIFTY" highlightedStrike={highlightedStrike} />
                 </TabsContent>
-                <TabsContent value="SENSEX" className="mt-0 overflow-hidden" style={{height: "calc(100% - 40px)"}}>
+                <TabsContent value="SENSEX" className="flex-1 min-h-0 mt-0">
                   <OptionChainTable chain={marketData.sensexChain} index="SENSEX" highlightedStrike={highlightedStrike} />
                 </TabsContent>
               </Tabs>
@@ -415,17 +415,22 @@ const Dashboard = () => {
             </div>
           )}
 
-          {/* Signal Panel */}
-          <div className={`${showOptionChain ? 'w-[300px]' : 'flex-1 max-w-lg'} flex-shrink-0 min-h-[200px]`}>
-            <SignalPanel
-              signals={signals}
-              onConfirm={handleConfirmTrade}
-              onDismiss={dismissSignal}
-              riskLimitReached={riskLimitReached}
-              onExecuteTrade={handleExecuteTrade}
-              onViewInChain={handleViewInChain}
-              dataSourceInfo={dataSourceInfo}
-            />
+          {/* Signal Panel + Positions */}
+          <div className={`${showOptionChain ? 'w-[300px]' : 'flex-1 max-w-lg'} flex-shrink-0 flex flex-col gap-2 min-h-0`}>
+            <div className="flex-1 min-h-0">
+              <SignalPanel
+                signals={signals}
+                onConfirm={handleConfirmTrade}
+                onDismiss={dismissSignal}
+                riskLimitReached={riskLimitReached}
+                onExecuteTrade={handleExecuteTrade}
+                onViewInChain={handleViewInChain}
+                dataSourceInfo={dataSourceInfo}
+              />
+            </div>
+            <div className="h-[160px] flex-shrink-0">
+              <PositionsPanel positions={positions} dailyPnL={dailyPnL} tradesToday={tradesToday} onExitPosition={handleExitPosition} tradeHistory={tradeStore.closedTrades} />
+            </div>
           </div>
         </div>
 
@@ -457,10 +462,7 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {/* Positions */}
-        <div className="px-4 pb-3 h-[160px] flex-shrink-0">
-          <PositionsPanel positions={positions} dailyPnL={dailyPnL} tradesToday={tradesToday} onExitPosition={handleExitPosition} tradeHistory={tradeStore.closedTrades} />
-        </div>
+
 
         {/* Trade Ticket Modal */}
         <TradeTicketModal
