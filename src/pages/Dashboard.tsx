@@ -28,6 +28,7 @@ const Dashboard = () => {
   const [selectedIndex, setSelectedIndex] = useState<'NIFTY' | 'SENSEX'>('NIFTY');
   const [brokerDialogOpen, setBrokerDialogOpen] = useState(false);
   const [showOptionChain, setShowOptionChain] = useState(true);
+  const [chainMaximized, setChainMaximized] = useState(false);
   const [highlightedStrike, setHighlightedStrike] = useState<number | null>(null);
   const [tradeTicketSignal, setTradeTicketSignal] = useState<typeof signals[0] | null>(null);
   const [tradeTicketOpen, setTradeTicketOpen] = useState(false);
@@ -388,14 +389,25 @@ const Dashboard = () => {
                     <TabsTrigger value="NIFTY" className="font-mono text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">NIFTY</TabsTrigger>
                     <TabsTrigger value="SENSEX" className="font-mono text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">SENSEX</TabsTrigger>
                   </TabsList>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setShowOptionChain(false)}
-                    className="text-xs text-muted-foreground gap-1"
-                  >
-                    <EyeOff className="w-3 h-3" /> Hide Chain
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setChainMaximized(p => !p)}
+                      className="text-xs text-muted-foreground gap-1"
+                      title={chainMaximized ? "Restore" : "Maximize chain"}
+                    >
+                      {chainMaximized ? '⊡' : '⊞'}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShowOptionChain(false)}
+                      className="text-xs text-muted-foreground gap-1"
+                    >
+                      <EyeOff className="w-3 h-3" /> Hide Chain
+                    </Button>
+                  </div>
                 </div>
                 <TabsContent value="NIFTY" className="flex-1 min-h-0 mt-0">
                   <OptionChainTable chain={marketData.niftyChain} index="NIFTY" highlightedStrike={highlightedStrike} />
@@ -421,7 +433,7 @@ const Dashboard = () => {
           )}
 
           {/* Signal Panel + Positions */}
-          <div className={`${showOptionChain ? 'w-[300px]' : 'flex-1 max-w-lg'} flex-shrink-0 flex flex-col gap-2 min-h-0`}>
+          <div className={`${chainMaximized ? 'hidden' : showOptionChain ? 'w-[300px]' : 'flex-1 max-w-lg'} flex-shrink-0 flex flex-col gap-2 min-h-0`}>
             <div className="flex-1 min-h-0">
               <SignalPanel
                 signals={signals}
