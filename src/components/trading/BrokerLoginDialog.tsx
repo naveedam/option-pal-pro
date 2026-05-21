@@ -164,9 +164,33 @@ export function BrokerLoginDialog({ open, onOpenChange, onConnected, onConnect }
               </div>
             )}
             {success ? (
-              <div className="flex flex-col items-center gap-4 py-4">
-                <CheckCircle2 className="w-12 h-12 text-profit" />
-                <p className="text-sm text-profit font-semibold">KOTAK NEO CONNECTED</p>
+              <div className="flex flex-col gap-4 py-2">
+                <div className="flex items-center gap-3 p-3 rounded-md bg-profit/10 border border-profit/20">
+                  <CheckCircle2 className="w-8 h-8 text-profit flex-shrink-0" />
+                  <div>
+                    <p className="text-sm text-profit font-bold">KOTAK NEO CONNECTED</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Authentication and market feed active</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                  <div className="p-2 rounded bg-secondary border border-border">
+                    <div className="text-muted-foreground">AUTH</div>
+                    <div className="text-profit font-bold mt-0.5">● CONNECTED</div>
+                  </div>
+                  <div className="p-2 rounded bg-secondary border border-border">
+                    <div className="text-muted-foreground">MARKET FEED</div>
+                    <div className="text-profit font-bold mt-0.5">● LIVE</div>
+                  </div>
+                  <div className="p-2 rounded bg-secondary border border-border">
+                    <div className="text-muted-foreground">TRADING</div>
+                    <div className="text-profit font-bold mt-0.5">● ENABLED</div>
+                  </div>
+                  <div className="p-2 rounded bg-secondary border border-border">
+                    <div className="text-muted-foreground">SESSION</div>
+                    <div className="text-warning font-bold mt-0.5">8h VALID</div>
+                  </div>
+                </div>
+                <p className="text-[10px] text-muted-foreground text-center">Closing in a moment...</p>
               </div>
             ) : (
               <div className="space-y-3">
