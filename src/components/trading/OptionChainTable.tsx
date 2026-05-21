@@ -35,7 +35,7 @@ export function OptionChainTable({ chain, index, highlightedStrike }: OptionChai
           <span className="text-primary">Nearest Expiry</span>
         </div>
       </div>
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-y-scroll" style={{scrollbarWidth: "thin", scrollbarColor: "hsl(var(--border)) transparent"}}>
         <table className="w-full text-xs font-mono">
           <thead className="sticky top-0 bg-card z-10">
             <tr className="text-muted-foreground border-b border-border">
