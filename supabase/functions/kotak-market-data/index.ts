@@ -536,7 +536,7 @@ async function buildOptionChain(
           });
         }
         const row = strikeMap.get(strike)!;
-        const oiChange = parseInt(quote?.change_in_oi || "0", 10);
+        const oiChange = parseInt(quote?.change_in_oi || quote?.chng_in_oi || quote?.oi_change || quote?.change || "0", 10);
         const bid = parseFloat((Array.isArray(quote?.depth) ? quote.depth[0]?.buy_price : null) || quote?.best_bid_price || quote?.bp || quote?.total_buy || "0");
         const ask = parseFloat((Array.isArray(quote?.depth) ? quote.depth[0]?.sell_price : null) || quote?.best_ask_price || quote?.sp || quote?.total_sell || "0");
 
@@ -832,6 +832,7 @@ Deno.serve(async (req) => {
  
  
  
+
 
 
 
