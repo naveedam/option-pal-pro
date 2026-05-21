@@ -458,7 +458,7 @@ const Dashboard = () => {
         </div>
 
         {/* Positions */}
-        <div className="px-4 pb-3 h-[200px] flex-shrink-0">
+        <div className="px-4 pb-3 h-[160px] flex-shrink-0">
           <PositionsPanel positions={positions} dailyPnL={dailyPnL} tradesToday={tradesToday} onExitPosition={handleExitPosition} tradeHistory={tradeStore.closedTrades} />
         </div>
 
