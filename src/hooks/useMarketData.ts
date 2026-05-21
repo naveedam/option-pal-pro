@@ -556,7 +556,11 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
       });
 
       if (sizedSignals.length > 0) {
-        setSignals(prev => [...sizedSignals, ...prev].slice(0, 20));
+        setSignals(prev => {
+          const existingIds = new Set(prev.map(s => s.strategy + s.strike + s.optionType));
+          const fresh = sizedSignals.filter(s => !existingIds.has(s.strategy + s.strike + s.optionType));
+          return [...fresh, ...prev].slice(0, 20);
+        });
       }
     }
 

@@ -377,7 +377,7 @@ const Dashboard = () => {
           {/* Option Chain with toggle */}
           {showOptionChain && (
             <div className="flex-1 flex flex-col min-h-0">
-              <Tabs value={selectedIndex} onValueChange={(v) => setSelectedIndex(v as 'NIFTY' | 'SENSEX')} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <Tabs value={selectedIndex} onValueChange={(v) => setSelectedIndex(v as 'NIFTY' | 'SENSEX')} className="flex flex-col flex-1 min-h-0">
                 <div className="flex items-center justify-between mb-2">
                   <TabsList className="bg-secondary border border-border w-fit">
                     <TabsTrigger value="NIFTY" className="font-mono text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">NIFTY</TabsTrigger>
@@ -392,10 +392,10 @@ const Dashboard = () => {
                     <EyeOff className="w-3 h-3" /> Hide Chain
                   </Button>
                 </div>
-                <TabsContent value="NIFTY" className="flex-1 min-h-0 mt-0 overflow-hidden flex flex-col">
+                <TabsContent value="NIFTY" className="flex-1 min-h-0 mt-0">
                   <OptionChainTable chain={marketData.niftyChain} index="NIFTY" highlightedStrike={highlightedStrike} />
                 </TabsContent>
-                <TabsContent value="SENSEX" className="flex-1 min-h-0 mt-0 overflow-hidden flex flex-col">
+                <TabsContent value="SENSEX" className="flex-1 min-h-0 mt-0">
                   <OptionChainTable chain={marketData.sensexChain} index="SENSEX" highlightedStrike={highlightedStrike} />
                 </TabsContent>
               </Tabs>
