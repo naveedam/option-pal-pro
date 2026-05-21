@@ -500,18 +500,12 @@ async function buildOptionChain(
 
         // High-signal per-quote debug (limit verbosity to first batch only)
         if (i === 0) {
-          console.log("QUOTE DEBUG FULL " + JSON.stringify({
-            allKeys: Object.keys(quote || {}),
+          console.log("QUOTE DEBUG", {
             symbol: quote?.symbol,
-            exchange_token: quote?.exchange_token,
-            tk: quote?.tk,
-            token: quote?.token,
-            instrument_token: quote?.instrument_token,
             extractedToken: tokenFromQuote,
             inLookup: !!info,
-            sampleLookupKeys: Array.from(tokenLookup.keys()).slice(0, 3),
             rawLtp: ltpRaw,
-          }));
+          });
         }
 
         if (!tokenFromQuote || !info) {
@@ -806,7 +800,6 @@ Deno.serve(async (req) => {
 
     return new Response(JSON.stringify({
       success: true,
-      sampleRow: niftyChain[0] || null,
       data: {
         niftySpot, sensexSpot: 0, niftyChange, sensexChange: 0,
         niftyPCR, sensexPCR: 0, niftyATM: atmStrike, sensexATM: 0,
