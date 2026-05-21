@@ -500,12 +500,18 @@ async function buildOptionChain(
 
         // High-signal per-quote debug (limit verbosity to first batch only)
         if (i === 0) {
-          console.log("QUOTE DEBUG", {
+          console.log("QUOTE DEBUG FULL " + JSON.stringify({
+            allKeys: Object.keys(quote || {}),
             symbol: quote?.symbol,
+            exchange_token: quote?.exchange_token,
+            tk: quote?.tk,
+            token: quote?.token,
+            instrument_token: quote?.instrument_token,
             extractedToken: tokenFromQuote,
             inLookup: !!info,
+            sampleLookupKeys: Array.from(tokenLookup.keys()).slice(0, 3),
             rawLtp: ltpRaw,
-          });
+          }));
         }
 
         if (!tokenFromQuote || !info) {
@@ -515,8 +521,8 @@ async function buildOptionChain(
         }
 
         const ltp = parseFloat(ltpRaw || "0");
-        const oi = parseInt(quote?.open_interest || quote?.oi || "0", 10);
-        const vol = parseInt(quote?.volume || quote?.v || "0", 10);
+        const oi = parseInt(quote?.open_int || quote?.open_interest || quote?.oi || "0", 10);
+        const vol = parseInt(quote?.last_volume || quote?.volume || quote?.v || "0", 10);
 
         // Skip only if no LTP (per spec)
         if (!ltp || ltp <= 0) {
@@ -537,8 +543,8 @@ async function buildOptionChain(
         }
         const row = strikeMap.get(strike)!;
         const oiChange = parseInt(quote?.change_in_oi || "0", 10);
-        const bid = parseFloat(quote?.best_bid_price || quote?.bp || "0");
-        const ask = parseFloat(quote?.best_ask_price || quote?.sp || "0");
+        const bid = parseFloat((Array.isArray(quote?.depth) ? quote.depth[0]?.buy_price : null) || quote?.best_bid_price || quote?.bp || quote?.total_buy || "0");
+        const ask = parseFloat((Array.isArray(quote?.depth) ? quote.depth[0]?.sell_price : null) || quote?.best_ask_price || quote?.sp || quote?.total_sell || "0");
 
         if (info.optionType === "CE") {
           row.callLTP = ltp; row.callOI = oi; row.callOIChange = oiChange;
@@ -800,6 +806,7 @@ Deno.serve(async (req) => {
 
     return new Response(JSON.stringify({
       success: true,
+      sampleRow: niftyChain[0] || null,
       data: {
         niftySpot, sensexSpot: 0, niftyChange, sensexChange: 0,
         niftyPCR, sensexPCR: 0, niftyATM: atmStrike, sensexATM: 0,
@@ -832,3 +839,6 @@ Deno.serve(async (req) => {
  
  
  
+
+
+
