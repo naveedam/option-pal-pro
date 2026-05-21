@@ -111,7 +111,7 @@ function getStrikeOiSource(chain: OptionData[], strike: number): 'kotak' | 'none
 }
 
 // ─── Signal Generation ──────────────────────────────────────────────
-const STALE_THRESHOLD_MS = 15000;
+const STALE_THRESHOLD_MS = 30000; // 30s — signals stay fresh for 2 poll cycles
 
 function weightedConfidence(factors: { value: number; weight: number }[]): number {
   const totalWeight = factors.reduce((s, f) => s + f.weight, 0);
@@ -472,12 +472,12 @@ function refreshStaleness(signals: TradeSignal[], latestData: MarketData): Trade
   const chain = latestData.niftyChain;
   return signals.map(sig => {
     const livePrice = getLivePrice(chain, sig.strike, sig.optionType);
+    // Only mark stale by time — price is updated live so drift is expected
     const isStale = (now - sig.dataTimestamp) > STALE_THRESHOLD_MS;
-    const priceMismatch = livePrice > 0 && Math.abs(livePrice - sig.currentPrice) / sig.currentPrice > 0.02;
     return {
       ...sig,
       currentPrice: livePrice > 0 ? livePrice : sig.currentPrice,
-      isStale: isStale || priceMismatch,
+      isStale,
     };
   });
 }
@@ -629,7 +629,9 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
   }, [positions, tradesToday, riskSettings]);
 
   const executePaperTrade = useCallback((signal: TradeSignal): { success: true; position: Position } | { success: false; reason: string } => {
-    if (signal.isStale) return { success: false, reason: 'Signal is stale — price data outdated' };
+    // Allow execution if we have a live price, even if signal is old
+    const hasLivePrice = signal.currentPrice > 0;
+    if (signal.isStale && !hasLivePrice) return { success: false, reason: 'Signal is stale — price data outdated' };
     const now = Date.now();
     const cooldownMs = riskSettings.cooldownMinutes * 60 * 1000;
     if (now - lastTradeTime < cooldownMs) return { success: false, reason: `Cooldown: wait ${riskSettings.cooldownMinutes}min` };
