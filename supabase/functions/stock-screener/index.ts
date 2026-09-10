@@ -18,14 +18,37 @@ const CACHE_MINUTES = 15;
 const BULLISH_RSI = 60;
 const WEAK_RSI = 40;
 
-const DEFAULT_WATCHLIST: Array<{ ticker: string; name: string }> = [
+const DEFAULT_WATCHLIST = [
   { ticker: "RELIANCE.NS", name: "RELIANCE" },
   { ticker: "TCS.NS", name: "TCS" },
-  { ticker: "HDFCBANK.NS", name: "HDFCBANK" },
   { ticker: "INFY.NS", name: "INFY" },
+  { ticker: "HDFCBANK.NS", name: "HDFCBANK" },
   { ticker: "ICICIBANK.NS", name: "ICICIBANK" },
-  // ...paste the rest of your DEFAULT_WATCHLIST from app.py here.
-  // Kept short in this scaffold; the frontend can also POST a custom list.
+  { ticker: "SBIN.NS", name: "SBIN" },
+  { ticker: "LT.NS", name: "LT" },
+  { ticker: "ITC.NS", name: "ITC" },
+  { ticker: "BHARTIARTL.NS", name: "BHARTIARTL" },
+  { ticker: "KOTAKBANK.NS", name: "KOTAKBANK" },
+  { ticker: "AXISBANK.NS", name: "AXISBANK" },
+  { ticker: "BAJFINANCE.NS", name: "BAJFINANCE" },
+  { ticker: "HCLTECH.NS", name: "HCLTECH" },
+  { ticker: "ASIANPAINT.NS", name: "ASIANPAINT" },
+  { ticker: "MARUTI.NS", name: "MARUTI" },
+  { ticker: "TITAN.NS", name: "TITAN" },
+  { ticker: "SUNPHARMA.NS", name: "SUNPHARMA" },
+  { ticker: "TATASTEEL.NS", name: "TATASTEEL" },
+  { ticker: "JSWSTEEL.NS", name: "JSWSTEEL" },
+  { ticker: "M&M.NS", name: "M&M" },
+  { ticker: "TATAMOTORS.NS", name: "TATAMOTORS" },
+  { ticker: "TRENT.NS", name: "TRENT" },
+  { ticker: "POWERGRID.NS", name: "POWERGRID" },
+  { ticker: "NTPC.NS", name: "NTPC" },
+  { ticker: "ONGC.NS", name: "ONGC" },
+  { ticker: "COALINDIA.NS", name: "COALINDIA" },
+  { ticker: "ADANIENT.NS", name: "ADANIENT" },
+  { ticker: "ADANIPORTS.NS", name: "ADANIPORTS" },
+  { ticker: "HINDALCO.NS", name: "HINDALCO" },
+  { ticker: "TECHM.NS", name: "TECHM" }
 ];
 
 const corsHeaders = {
