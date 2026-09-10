@@ -26,7 +26,7 @@ import { LogOut, Plug, Eye, EyeOff } from 'lucide-react';
 
 const Dashboard = () => {
   const [isPaperTrading, setIsPaperTrading] = useState(true);
-  const [selectedIndex, setSelectedIndex] = useState<'NIFTY' | 'SENSEX'>(NIFTY);
+  const [selectedIndex, setSelectedIndex] = useState<'NIFTY' | 'SENSEX'>('NIFTY');
   const [workspace, setWorkspace] = useState<'OPTIONS' | 'STOCKS'>('OPTIONS');
   const [brokerDialogOpen, setBrokerDialogOpen] = useState(false);
   const [showOptionChain, setShowOptionChain] = useState(true);
