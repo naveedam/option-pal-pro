@@ -380,6 +380,27 @@ const Dashboard = () => {
           </div>
         </div>
 
+        <div className="px-4 pb-2 flex-shrink-0">
+          <div className="inline-flex rounded-md border border-border bg-secondary p-1">
+            <Button
+              variant={workspace === 'OPTIONS' ? 'default' : 'ghost'}
+              size="sm"
+              className="font-mono text-xs"
+              onClick={() => setWorkspace('OPTIONS')}
+            >
+              Options
+            </Button>
+            <Button
+              variant={workspace === 'STOCKS' ? 'default' : 'ghost'}
+              size="sm"
+              className="font-mono text-xs"
+              onClick={() => setWorkspace('STOCKS')}
+            >
+              Stocks
+            </Button>
+          </div>
+        </div>
+
         {/* Main content area */}
         {workspace === 'OPTIONS' ? (
           <div className="flex-1 flex min-h-0 px-4 pb-3 gap-3">
