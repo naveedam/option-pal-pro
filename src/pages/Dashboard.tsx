@@ -454,6 +454,12 @@ const Dashboard = () => {
           </div>
         </div>
 
+                ) : (
+          <div className="flex-1 px-4 pb-3 overflow-auto">
+            <StockScreener />
+          </div>
+        )}
+
         {/* Daily P&L Summary Bar */}
         <div className="px-4 py-1.5 flex-shrink-0 border-t border-border bg-secondary/30">
           <div className="flex items-center justify-between">
@@ -487,10 +493,6 @@ const Dashboard = () => {
         {/* Trade Ticket Modal */}
         </div>
         ) : (
-          <div className="flex-1 px-4 pb-3 overflow-auto">
-            <StockScreener />
-          </div>
-        )}
 
         <TradeTicketModal
           open={tradeTicketOpen}
