@@ -13,6 +13,7 @@ import { PositionsPanel } from '@/components/trading/PositionsPanel';
 import { RiskControls } from '@/components/trading/RiskControls';
 import { AnalyticsPanels } from '@/components/trading/AnalyticsPanels';
 import { BacktestPanel } from '@/components/trading/BacktestPanel';
+import StockScreener from '@/components/StockScreener';
 import { TradeTicketModal } from '@/components/trading/TradeTicketModal';
 import { useBacktest } from '@/hooks/useBacktest';
 import { useMarketData, type DataSource } from '@/hooks/useMarketData';
@@ -25,7 +26,8 @@ import { LogOut, Plug, Eye, EyeOff } from 'lucide-react';
 
 const Dashboard = () => {
   const [isPaperTrading, setIsPaperTrading] = useState(true);
-  const [selectedIndex, setSelectedIndex] = useState<'NIFTY' | 'SENSEX'>('NIFTY');
+  const [selectedIndex, setSelectedIndex] = useState<'NIFTY' | 'SENSEX'>(NIFTY);
+  const [workspace, setWorkspace] = useState<'OPTIONS' | 'STOCKS'>('OPTIONS');
   const [brokerDialogOpen, setBrokerDialogOpen] = useState(false);
   const [showOptionChain, setShowOptionChain] = useState(true);
   const [chainMaximized, setChainMaximized] = useState(false);
@@ -379,7 +381,8 @@ const Dashboard = () => {
         </div>
 
         {/* Main content area */}
-        <div className="flex-1 flex min-h-0 px-4 pb-3 gap-3">
+        {workspace === 'OPTIONS' ? (
+          <div className="flex-1 flex min-h-0 px-4 pb-3 gap-3">
           {/* Option Chain with toggle */}
           {showOptionChain && (
             <div className="flex-1 flex flex-col min-h-0">
@@ -482,6 +485,13 @@ const Dashboard = () => {
 
 
         {/* Trade Ticket Modal */}
+        </div>
+        ) : (
+          <div className="flex-1 px-4 pb-3 overflow-auto">
+            <StockScreener />
+          </div>
+        )}
+
         <TradeTicketModal
           open={tradeTicketOpen}
           onOpenChange={setTradeTicketOpen}
