@@ -34,7 +34,7 @@ export default function StockScreener() {
   async function load() {
     setLoading(true);
     setError(null);
-    const { data, error } = await supabase.functions.invoke("screener-data");
+    const { data, error } = await supabase.functions.invoke("stock-screener");
     if (error) setError(error.message);
     else setStocks(data?.stocks ?? []);
     setLoading(false);
