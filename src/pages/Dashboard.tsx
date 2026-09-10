@@ -492,7 +492,6 @@ const Dashboard = () => {
 
         {/* Trade Ticket Modal */}
         </div>
-        ) : (
 
         <TradeTicketModal
           open={tradeTicketOpen}
