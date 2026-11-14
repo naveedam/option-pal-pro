@@ -13,7 +13,6 @@ import { PositionsPanel } from '@/components/trading/PositionsPanel';
 import { RiskControls } from '@/components/trading/RiskControls';
 import { AnalyticsPanels } from '@/components/trading/AnalyticsPanels';
 import { BacktestPanel } from '@/components/trading/BacktestPanel';
-import StockScreener from '@/components/StockScreener';
 import { TradeTicketModal } from '@/components/trading/TradeTicketModal';
 import { useBacktest } from '@/hooks/useBacktest';
 import { useMarketData, type DataSource } from '@/hooks/useMarketData';
@@ -27,7 +26,6 @@ import { LogOut, Plug, Eye, EyeOff } from 'lucide-react';
 const Dashboard = () => {
   const [isPaperTrading, setIsPaperTrading] = useState(true);
   const [selectedIndex, setSelectedIndex] = useState<'NIFTY' | 'SENSEX'>('NIFTY');
-  const [workspace, setWorkspace] = useState<'OPTIONS' | 'STOCKS'>('OPTIONS');
   const [brokerDialogOpen, setBrokerDialogOpen] = useState(false);
   const [showOptionChain, setShowOptionChain] = useState(true);
   const [chainMaximized, setChainMaximized] = useState(false);
@@ -52,7 +50,7 @@ const Dashboard = () => {
     riskSettings, setRiskSettings, riskLimitReached,
     executePaperTrade, validateRiskLimits, addLivePosition,
     exitPosition, dismissSignal, feedHealth, retryFeed,
-    autoTradeEnabled, setAutoTradeEnabled, dataSourceInfo,
+    autoTradeEnabled, setAutoTradeEnabled, dataSourceInfo, casState,
   } = useMarketData(isPaperTrading, true);
 
   const openBrokerDialog = useCallback(() => setBrokerDialogOpen(true), []);
@@ -380,29 +378,8 @@ const Dashboard = () => {
           </div>
         </div>
 
-        <div className="px-4 pb-2 flex-shrink-0">
-          <div className="inline-flex rounded-md border border-border bg-secondary p-1">
-            <Button
-              variant={workspace === 'OPTIONS' ? 'default' : 'ghost'}
-              size="sm"
-              className="font-mono text-xs"
-              onClick={() => setWorkspace('OPTIONS')}
-            >
-              Options
-            </Button>
-            <Button
-              variant={workspace === 'STOCKS' ? 'default' : 'ghost'}
-              size="sm"
-              className="font-mono text-xs"
-              onClick={() => setWorkspace('STOCKS')}
-            >
-              Stocks
-            </Button>
-          </div>
-        </div>
-
         {/* Main content area */}
-        {workspace === 'OPTIONS' ? (
+        
           <div className="flex-1 flex min-h-0 px-4 pb-3 gap-3">
           {/* Option Chain with toggle */}
           {showOptionChain && (
@@ -467,6 +444,7 @@ const Dashboard = () => {
                 onExecuteTrade={handleExecuteTrade}
                 onViewInChain={handleViewInChain}
                 dataSourceInfo={dataSourceInfo}
+                casState={casState}
               />
             </div>
             <div className="h-[160px] flex-shrink-0">
@@ -475,11 +453,6 @@ const Dashboard = () => {
           </div>
         </div>
 
-                ) : (
-          <div className="flex-1 px-4 pb-3 overflow-auto">
-            <StockScreener />
-          </div>
-        )}
 
         {/* Daily P&L Summary Bar */}
         <div className="px-4 py-1.5 flex-shrink-0 border-t border-border bg-secondary/30">

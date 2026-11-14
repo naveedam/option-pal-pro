@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import type { TradeSignal, DataSource } from '@/hooks/useMarketData';
 import { instrumentStore } from '@/services/instrumentStore';
+import { CAS_PHASE_LABEL, type CasState } from '@/lib/closingAuction';
 
 interface SignalPanelProps {
   signals: TradeSignal[];
@@ -13,6 +14,33 @@ interface SignalPanelProps {
   onExecuteTrade?: (signal: TradeSignal) => void;
   onViewInChain?: (strike: number) => void;
   dataSourceInfo?: { source: DataSource; oiSource: 'kotak' | 'none'; lastUpdated: number };
+  casState?: CasState;
+}
+
+function fmtCountdown(sec: number): string {
+  const mm = Math.floor(sec / 60), ss = sec % 60;
+  return `${mm}:${String(ss).padStart(2, '0')}`;
+}
+
+/** Closing Auction Session status strip: phase, countdown, and entry gating. */
+function CasStrip({ cas }: { cas: CasState }) {
+  const active = cas.phase !== 'PRE_CLOSE' && cas.phase !== 'CLOSED';
+  const tone = cas.blockNewEntries && cas.phase !== 'CLOSED'
+    ? 'border-loss/40 bg-loss/10 text-loss'
+    : active ? 'border-warning/40 bg-warning/10 text-warning'
+    : 'border-border bg-secondary/40 text-muted-foreground';
+  return (
+    <div className={`rounded border px-2 py-1 text-[10px] font-mono ${tone}`}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-bold">CAS {cas.framework}</span>
+        <span>{CAS_PHASE_LABEL[cas.phase]}{cas.secondsToPhaseEnd > 0 ? ` · ${fmtCountdown(cas.secondsToPhaseEnd)}` : ''}</span>
+        {cas.expiryDay && <span className="px-1 rounded bg-loss/20 text-loss">EXPIRY</span>}
+      </div>
+      {cas.blockNewEntries && cas.blockReason && cas.phase !== 'CLOSED' && (
+        <div className="mt-0.5 opacity-90">⛔ {cas.blockReason}</div>
+      )}
+    </div>
+  );
 }
 
 function ConfidenceBadge({ confidence }: { confidence: number }) {
@@ -186,7 +214,7 @@ function SignalCard({ signal, onConfirm, onDismiss, riskLimitReached, onExecuteT
   );
 }
 
-export function SignalPanel({ signals, onConfirm, onDismiss, riskLimitReached, onExecuteTrade, onViewInChain, dataSourceInfo }: SignalPanelProps) {
+export function SignalPanel({ signals, onConfirm, onDismiss, riskLimitReached, onExecuteTrade, onViewInChain, dataSourceInfo, casState }: SignalPanelProps) {
   const [expanded, setExpanded] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
 
@@ -200,6 +228,7 @@ export function SignalPanel({ signals, onConfirm, onDismiss, riskLimitReached, o
 
   const panelContent = (
     <>
+      {casState && <CasStrip cas={casState} />}
       {riskLimitReached && (
         <div className="bg-loss/10 border border-loss/30 rounded-md p-2 text-xs text-loss">
           ⚠ Risk limit reached — signals paused

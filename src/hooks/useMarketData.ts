@@ -2,6 +2,11 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { KotakMarketFeed, type FeedHealth, type FeedDataResult } from '@/services/kotakMarketFeed';
 import { calculateQty } from '@/hooks/usePositionSizing';
 import type { ActiveDataSource } from '@/services/marketDataProvider';
+import { instrumentStore } from '@/services/instrumentStore';
+import {
+  getCasState, isExpiryDay, windowAverage, windowProgress, istClock,
+  type CasState, type SpotSample,
+} from '@/lib/closingAuction';
 
 // ─── Types ───────────────────────────────────────────────────────────
 export interface OptionData {
@@ -458,6 +463,106 @@ function generateMultiTimeframeSignals(data: MarketData, priceHistory: number[],
   return signals;
 }
 
+// ─── Closing Auction Session signals ─────────────────────────────────
+const NIFTY_STRIKE_STEP = 50;
+const CAS_DRIFT_MIN_PCT = 0.08;     // spot vs reference-window average
+const SETTLEMENT_EDGE_POINTS = 15;  // projected settlement beyond ATM by this many points
+
+function recentSlope(samples: SpotSample[], n = 6): number {
+  const tail = samples.slice(-n);
+  if (tail.length < 2) return 0;
+  return tail[tail.length - 1].spot - tail[0].spot;
+}
+
+export function generateClosingAuctionSignals(
+  data: MarketData, samples: SpotSample[], dataTimestamp: number, oiSource: DataSource, cas: CasState, now: number = Date.now(),
+): TradeSignal[] {
+  if (cas.blockNewEntries) return [];
+  const signals: TradeSignal[] = [];
+  const spot = data.niftySpot;
+  const atm = data.niftyATM;
+  const chain = data.niftyChain;
+  if (spot <= 0 || !atm || chain.length === 0) return signals;
+  const isStale = (now - dataTimestamp) > STALE_THRESHOLD_MS;
+  const baseFields = { dataSource: oiSource, isStale, dataTimestamp };
+  const cfg = cas.config;
+
+  // 1) CAS reference drift — the auction reference price is the VWAP of this window.
+  //    Spot holding away from the running reference with momentum late in the window
+  //    signals the side the closing auction imbalance is likely to lean.
+  if (cas.phase === 'REFERENCE_WINDOW') {
+    const progress = windowProgress(cfg.refWindow, now);
+    const ref = windowAverage(samples, cfg.refWindow, now);
+    if (ref && progress >= 0.5 && ref.coverage >= 0.4) {
+      const devPct = ((spot - ref.avg) / ref.avg) * 100;
+      const slope = recentSlope(samples);
+      const up = devPct >= CAS_DRIFT_MIN_PCT && slope > 0;
+      const down = devPct <= -CAS_DRIFT_MIN_PCT && slope < 0;
+      if (up || down) {
+        const optionType = up ? 'CE' : 'PE';
+        const confidence = weightedConfidence([
+          { value: Math.min(100, (Math.abs(devPct) / 0.25) * 100), weight: 3 },
+          { value: progress * 100, weight: 2 },
+          { value: ref.coverage * 100, weight: 1 },
+        ]);
+        signals.push({
+          id: `sig-cas-ref-${now}`, index: 'NIFTY', strike: atm, optionType,
+          strategy: up ? 'CAS Ref Drift Up' : 'CAS Ref Drift Down',
+          reason: `Spot ${spot.toFixed(0)} is ${devPct >= 0 ? '+' : ''}${devPct.toFixed(2)}% vs CAS reference avg ${ref.avg.toFixed(0)} (${Math.round(progress * 100)}% of ref window done), momentum ${up ? 'rising' : 'falling'} into the auction`,
+          currentPrice: getLivePrice(chain, atm, optionType),
+          suggestedQty: 65, timestamp: now,
+          strength: confidence >= 70 ? 'HIGH' : 'MEDIUM',
+          oiSource: getStrikeOiSource(chain, atm),
+          confidence,
+          ...baseFields,
+        });
+      }
+    }
+  }
+
+  // 2) Expiry settlement lock (V2) — expiring index contracts settle on the 15:00–15:30
+  //    VWAP-derived index value. As the window elapses the settlement value becomes
+  //    increasingly fixed; favour the side that is in-the-money versus the projection.
+  if (cas.expiryDay && cfg.settlementWindow) {
+    const win = cfg.settlementWindow;
+    const progress = windowProgress(win, now);
+    const avg = windowAverage(samples, win, now);
+    if (avg && progress >= 0.6 && progress < 1) {
+      const projected = avg.avg * progress + spot * (1 - progress);
+      const edge = projected - atm;
+      if (Math.abs(edge) >= SETTLEMENT_EDGE_POINTS) {
+        const optionType = edge > 0 ? 'CE' : 'PE';
+        const strike = edge > 0
+          ? Math.floor(projected / NIFTY_STRIKE_STEP) * NIFTY_STRIKE_STEP
+          : Math.ceil(projected / NIFTY_STRIKE_STEP) * NIFTY_STRIKE_STEP;
+        const price = getLivePrice(chain, strike, optionType);
+        if (price > 0) {
+          const intrinsic = Math.abs(projected - strike);
+          const confidence = weightedConfidence([
+            { value: progress * 100, weight: 3 },
+            { value: Math.min(100, (Math.abs(edge) / NIFTY_STRIKE_STEP) * 100), weight: 2 },
+            { value: price <= intrinsic * 1.15 ? 90 : 40, weight: 2 }, // premium not far above projected intrinsic
+            { value: avg.coverage * 100, weight: 1 },
+          ]);
+          signals.push({
+            id: `sig-cas-settle-${now}`, index: 'NIFTY', strike, optionType,
+            strategy: 'Expiry Settlement Lock',
+            reason: `Projected settlement ${projected.toFixed(1)} (${Math.round(progress * 100)}% of 15:00–15:30 VWAP window locked) · intrinsic ≈ ₹${intrinsic.toFixed(1)} vs LTP ₹${price.toFixed(1)}`,
+            currentPrice: price,
+            suggestedQty: 65, timestamp: now,
+            strength: confidence >= 75 ? 'HIGH' : 'MEDIUM',
+            oiSource: getStrikeOiSource(chain, strike),
+            confidence,
+            ...baseFields,
+          });
+        }
+      }
+    }
+  }
+
+  return signals;
+}
+
 function generateSignals(data: MarketData, priceHistory: number[], dataTimestamp: number, oiSource: DataSource): TradeSignal[] {
   return [
     ...generateOiSignals(data, dataTimestamp, oiSource),
@@ -505,6 +610,9 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
 
   const feedRef = useRef<KotakMarketFeed | null>(null);
   const priceHistoryRef = useRef<number[]>([]);
+  const spotSamplesRef = useRef<SpotSample[]>([]);
+  const [casState, setCasState] = useState<CasState>(() =>
+    getCasState(isExpiryDay('NIFTY', instrumentStore.getState().expiry)));
 
   const handleMarketData = useCallback((result: FeedDataResult) => {
     const data = result.data;
@@ -539,9 +647,23 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
     // Refresh stale flags on existing signals with new live prices
     setSignals(prev => refreshStaleness(prev, data));
 
-    // Generate new signals — only from verified Kotak data
-    if (!riskLimitReached) {
-      const newSignals = generateSignals(data, priceHistoryRef.current, dataTimestamp, oiSource);
+    // Timestamped spot samples for closing-window averages (keep today's last 60 min)
+    const nowTs = Date.now();
+    const samples = spotSamplesRef.current;
+    samples.push({ t: dataTimestamp, spot: data.niftySpot });
+    const today = istClock(nowTs).date;
+    while (samples.length && (nowTs - samples[0].t > 60 * 60_000 || istClock(samples[0].t).date !== today)) samples.shift();
+
+    const cas = getCasState(isExpiryDay('NIFTY', instrumentStore.getState().expiry, nowTs), nowTs);
+    setCasState(cas);
+
+    // Generate new signals — only from verified Kotak data, and only while the
+    // closing-auction framework allows fresh entries on the nearest contract.
+    if (!riskLimitReached && !cas.blockNewEntries) {
+      const newSignals = [
+        ...generateSignals(data, priceHistoryRef.current, dataTimestamp, oiSource),
+        ...generateClosingAuctionSignals(data, samples, dataTimestamp, oiSource, cas, nowTs),
+      ];
 
       const sizedSignals = newSignals.map(sig => {
         const lotSize = sig.index === 'NIFTY' ? 65 : 15;
@@ -586,6 +708,14 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
       })
     );
   }, [riskLimitReached, riskSettings]);
+
+  // Keep the closing-auction phase/countdown ticking even between feed updates
+  useEffect(() => {
+    const id = setInterval(() => {
+      setCasState(getCasState(isExpiryDay('NIFTY', instrumentStore.getState().expiry)));
+    }, 5000);
+    return () => clearInterval(id);
+  }, []);
 
   // Timeout fallback
   useEffect(() => {
@@ -693,6 +823,6 @@ export function useMarketData(isPaperTrading: boolean, marketDataEnabled: boolea
     riskSettings, setRiskSettings, riskLimitReached,
     executePaperTrade, validateRiskLimits, addLivePosition,
     exitPosition, dismissSignal, feedHealth, retryFeed,
-    autoTradeEnabled, setAutoTradeEnabled, dataSourceInfo,
+    autoTradeEnabled, setAutoTradeEnabled, dataSourceInfo, casState,
   };
 }
